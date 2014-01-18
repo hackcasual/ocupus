@@ -25,6 +25,7 @@ var localPeerConnection;
 
 function myAnswer(description) {
   localPeerConnection.setLocalDescription(description);
+  description.sdp = setBitRate(description.sdp, 512);
   sendToPeer(lastPeerId, JSON.stringify(description));
 }
 
@@ -47,13 +48,13 @@ function iceCallback2(icb) {
   }
 }
 
-function setBitRate(sdp)
+function setBitRate(sdp, videoBitRate)
  {
   sdp = sdp.replace( /b=AS([^\r\n]+\r\n)/g , '');
   // Set audio bandwidth low until we can get rid of it totally
   sdp = sdp.replace( /a=mid:audio\r\n/g , 'a=mid:audio\r\nb=AS:10\r\n');
   // 256 kilobits per second
-  sdp = sdp.replace( /a=mid:video\r\n/g , 'a=mid:video\r\nb=AS:256\r\n');
+  sdp = sdp.replace( /a=mid:video\r\n/g , 'a=mid:video\r\nb=AS:' + videoBitRate + '\r\n');
   return sdp;
  }
 
