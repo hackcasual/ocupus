@@ -1,0 +1,1378 @@
+Index: talk/examples/peerconnection/client/conductor.cc
+===================================================================
+--- talk/examples/peerconnection/client/conductor.cc	(revision 5193)
++++ talk/examples/peerconnection/client/conductor.cc	(working copy)
+@@ -64,12 +64,13 @@
+   ~DummySetSessionDescriptionObserver() {}
+ };
+ 
+-Conductor::Conductor(PeerConnectionClient* client, MainWindow* main_wnd)
++Conductor::Conductor(PeerConnectionClient* client, std::deque<std::string*>* remote_messages, 
++    const std::string& device)
+   : peer_id_(-1),
+     client_(client),
+-    main_wnd_(main_wnd) {
++    remote_messages_(remote_messages),
++    device_(device) {
+   client_->RegisterObserver(this);
+-  main_wnd->RegisterObserver(this);
+ }
+ 
+ Conductor::~Conductor() {
+@@ -92,8 +93,7 @@
+   peer_connection_factory_  = webrtc::CreatePeerConnectionFactory();
+ 
+   if (!peer_connection_factory_.get()) {
+-    main_wnd_->MessageBox("Error",
+-        "Failed to initialize PeerConnectionFactory", true);
++    LOG(LS_ERROR) << "Failed to initialize PeerConnectionFactory";
+     DeletePeerConnection();
+     return false;
+   }
+@@ -107,8 +107,7 @@
+                                                                     NULL,
+                                                                     this);
+   if (!peer_connection_.get()) {
+-    main_wnd_->MessageBox("Error",
+-        "CreatePeerConnection failed", true);
++    LOG(LS_ERROR) << "CreatePeerConnection failed";
+     DeletePeerConnection();
+   }
+   AddStreams();
+@@ -118,18 +117,13 @@
+ void Conductor::DeletePeerConnection() {
+   peer_connection_ = NULL;
+   active_streams_.clear();
+-  main_wnd_->StopLocalRenderer();
+-  main_wnd_->StopRemoteRenderer();
+   peer_connection_factory_ = NULL;
+   peer_id_ = -1;
+ }
+ 
+ void Conductor::EnsureStreamingUI() {
+   ASSERT(peer_connection_.get() != NULL);
+-  if (main_wnd_->IsWindow()) {
+-    if (main_wnd_->current_ui() != MainWindow::STREAMING)
+-      main_wnd_->SwitchToStreamingUI();
+-  }
++  //TODO: This should be removed
+ }
+ 
+ //
+@@ -138,7 +132,6 @@
+ 
+ void Conductor::OnError() {
+   LOG(LS_ERROR) << __FUNCTION__;
+-  main_wnd_->QueueUIThreadCallback(PEER_CONNECTION_ERROR, NULL);
+ }
+ 
+ // Called when a remote stream is added
+@@ -146,15 +139,12 @@
+   LOG(INFO) << __FUNCTION__ << " " << stream->label();
+ 
+   stream->AddRef();
+-  main_wnd_->QueueUIThreadCallback(NEW_STREAM_ADDED,
+-                                   stream);
+ }
+ 
+ void Conductor::OnRemoveStream(webrtc::MediaStreamInterface* stream) {
+   LOG(INFO) << __FUNCTION__ << " " << stream->label();
+   stream->AddRef();
+-  main_wnd_->QueueUIThreadCallback(STREAM_REMOVED,
+-                                   stream);
++  stream->Release();
+ }
+ 
+ void Conductor::OnIceCandidate(const webrtc::IceCandidateInterface* candidate) {
+@@ -179,35 +169,33 @@
+ 
+ void Conductor::OnSignedIn() {
+   LOG(INFO) << __FUNCTION__;
+-  main_wnd_->SwitchToPeerList(client_->peers());
+ }
+ 
+ void Conductor::OnDisconnected() {
+   LOG(INFO) << __FUNCTION__;
+ 
+   DeletePeerConnection();
+-
+-  if (main_wnd_->IsWindow())
+-    main_wnd_->SwitchToConnectUI();
+ }
+ 
+ void Conductor::OnPeerConnected(int id, const std::string& name) {
+   LOG(INFO) << __FUNCTION__;
+-  // Refresh the list if we're showing it.
+-  if (main_wnd_->current_ui() == MainWindow::LIST_PEERS)
+-    main_wnd_->SwitchToPeerList(client_->peers());
++  LOG(INFO) << name << " connected";
++  if (name == "receiver")
++    ConnectToPeer(id);
+ }
+ 
+ void Conductor::OnPeerDisconnected(int id) {
+   LOG(INFO) << __FUNCTION__;
+   if (id == peer_id_) {
+     LOG(INFO) << "Our peer disconnected";
+-    main_wnd_->QueueUIThreadCallback(PEER_CONNECTION_CLOSED, NULL);
+-  } else {
+-    // Refresh the list if we're showing it.
+-    if (main_wnd_->current_ui() == MainWindow::LIST_PEERS)
+-      main_wnd_->SwitchToPeerList(client_->peers());
++   std::map<std::string, talk_base::scoped_refptr<webrtc::MediaStreamInterface> >::iterator 
++    stream_it = active_streams_.begin();
++  for (; stream_it != active_streams_.end(); ++stream_it) {
++   stream_it->second->Release();
+   }
++  active_streams_.clear();
++  DeletePeerConnection();
++  }
+ }
+ 
+ void Conductor::OnMessageFromPeer(int peer_id, const std::string& message) {
+@@ -215,6 +203,7 @@
+   ASSERT(!message.empty());
+ 
+   if (!peer_connection_.get()) {
++    LOG(INFO) << "Not currently connected to a peer ";
+     ASSERT(peer_id_ == -1);
+     peer_id_ = peer_id;
+ 
+@@ -229,11 +218,10 @@
+                     "conversation with a different peer.";
+     return;
+   }
+-
+   Json::Reader reader;
+   Json::Value jmessage;
+   if (!reader.parse(message, jmessage)) {
+-    LOG(WARNING) << "Received unknown message. " << message;
++    LOG(WARNING) << "Received unknown message " << message << " from peer " << peer_id;
+     return;
+   }
+   std::string type;
+@@ -274,11 +262,12 @@
+     talk_base::scoped_ptr<webrtc::IceCandidateInterface> candidate(
+         webrtc::CreateIceCandidate(sdp_mid, sdp_mlineindex, sdp));
+     if (!candidate.get()) {
+-      LOG(WARNING) << "Can't parse received candidate message.";
++      LOG(INFO) << "Can't parse received candidate message.";
+       return;
+     }
++    LOG(INFO) << peer_connection_.get();
+     if (!peer_connection_->AddIceCandidate(candidate.get())) {
+-      LOG(WARNING) << "Failed to apply the received candidate";
++      LOG(INFO) << "Failed to apply the received candidate";
+       return;
+     }
+     LOG(INFO) << " Received candidate :" << message;
+@@ -288,12 +277,11 @@
+ 
+ void Conductor::OnMessageSent(int err) {
+   // Process the next pending message if any.
+-  main_wnd_->QueueUIThreadCallback(SEND_MESSAGE_TO_PEER, NULL);
++    remote_messages_->push_back(NULL);
+ }
+ 
+ void Conductor::OnServerConnectionFailure() {
+-    main_wnd_->MessageBox("Error", ("Failed to connect to " + server_).c_str(),
+-                          true);
++    LOG(LS_ERROR) << ("Failed to connect to " + server_).c_str();
+ }
+ 
+ //
+@@ -317,8 +305,7 @@
+   ASSERT(peer_id != -1);
+ 
+   if (peer_connection_.get()) {
+-    main_wnd_->MessageBox("Error",
+-        "We only support connecting to one peer at a time", true);
++    LOG(LS_ERROR) << "We only support connecting to one peer at a time";
+     return;
+   }
+ 
+@@ -326,7 +313,7 @@
+     peer_id_ = peer_id;
+     peer_connection_->CreateOffer(this, NULL);
+   } else {
+-    main_wnd_->MessageBox("Error", "Failed to initialize PeerConnection", true);
++    LOG(LS_ERROR) << "Failed to initialize PeerConnection";
+   }
+ }
+ 
+@@ -345,9 +332,11 @@
+   std::vector<cricket::Device>::iterator dev_it = devs.begin();
+   cricket::VideoCapturer* capturer = NULL;
+   for (; dev_it != devs.end(); ++dev_it) {
+-    capturer = dev_manager->CreateVideoCapturer(*dev_it);
+-    if (capturer != NULL)
+-      break;
++    if (dev_it->id == device_) {
++      capturer = dev_manager->CreateVideoCapturer(*dev_it);
++      if (capturer != NULL)
++        break;
++    }
+   }
+   return capturer;
+ }
+@@ -356,21 +345,15 @@
+   if (active_streams_.find(kStreamLabel) != active_streams_.end())
+     return;  // Already added.
+ 
+-  talk_base::scoped_refptr<webrtc::AudioTrackInterface> audio_track(
+-      peer_connection_factory_->CreateAudioTrack(
+-          kAudioLabel, peer_connection_factory_->CreateAudioSource(NULL)));
+-
+   talk_base::scoped_refptr<webrtc::VideoTrackInterface> video_track(
+       peer_connection_factory_->CreateVideoTrack(
+           kVideoLabel,
+           peer_connection_factory_->CreateVideoSource(OpenVideoCaptureDevice(),
+                                                       NULL)));
+-  main_wnd_->StartLocalRenderer(video_track);
+ 
+   talk_base::scoped_refptr<webrtc::MediaStreamInterface> stream =
+       peer_connection_factory_->CreateLocalMediaStream(kStreamLabel);
+ 
+-  stream->AddTrack(audio_track);
+   stream->AddTrack(video_track);
+   if (!peer_connection_->AddStream(stream, NULL)) {
+     LOG(LS_ERROR) << "Adding stream to PeerConnection failed";
+@@ -379,18 +362,15 @@
+                     talk_base::scoped_refptr<webrtc::MediaStreamInterface> >
+       MediaStreamPair;
+   active_streams_.insert(MediaStreamPair(stream->label(), stream));
+-  main_wnd_->SwitchToStreamingUI();
+ }
+ 
+ void Conductor::DisconnectFromCurrentPeer() {
+   LOG(INFO) << __FUNCTION__;
+   if (peer_connection_.get()) {
+     client_->SendHangUp(peer_id_);
+-    DeletePeerConnection();
++    
+   }
+-
+-  if (main_wnd_->IsWindow())
+-    main_wnd_->SwitchToPeerList(client_->peers());
++  DeletePeerConnection();
+ }
+ 
+ void Conductor::UIThreadCallback(int msg_id, void* data) {
+@@ -401,15 +381,6 @@
+ 
+       ASSERT(active_streams_.empty());
+ 
+-      if (main_wnd_->IsWindow()) {
+-        if (client_->is_connected()) {
+-          main_wnd_->SwitchToPeerList(client_->peers());
+-        } else {
+-          main_wnd_->SwitchToConnectUI();
+-        }
+-      } else {
+-        DisconnectFromServer();
+-      }
+       break;
+ 
+     case SEND_MESSAGE_TO_PEER: {
+@@ -440,29 +411,14 @@
+     }
+ 
+     case PEER_CONNECTION_ERROR:
+-      main_wnd_->MessageBox("Error", "an unknown error occurred", true);
+       break;
+ 
++    // Doesn't recieve streams
+     case NEW_STREAM_ADDED: {
+-      webrtc::MediaStreamInterface* stream =
+-          reinterpret_cast<webrtc::MediaStreamInterface*>(
+-          data);
+-      webrtc::VideoTrackVector tracks = stream->GetVideoTracks();
+-      // Only render the first track.
+-      if (!tracks.empty()) {
+-        webrtc::VideoTrackInterface* track = tracks[0];
+-        main_wnd_->StartRemoteRenderer(track);
+-      }
+-      stream->Release();
+       break;
+     }
+ 
+     case STREAM_REMOVED: {
+-      // Remote peer stopped sending a stream.
+-      webrtc::MediaStreamInterface* stream =
+-          reinterpret_cast<webrtc::MediaStreamInterface*>(
+-          data);
+-      stream->Release();
+       break;
+     }
+ 
+@@ -490,5 +446,7 @@
+ 
+ void Conductor::SendMessage(const std::string& json_object) {
+   std::string* msg = new std::string(json_object);
+-  main_wnd_->QueueUIThreadCallback(SEND_MESSAGE_TO_PEER, msg);
++  LOG(INFO) << __FUNCTION__;
++  //UIThreadCallback(SEND_MESSAGE_TO_PEER, msg);
++  remote_messages_->push_back(msg);
+ }
+Index: talk/examples/peerconnection/client/conductor.h
+===================================================================
+--- talk/examples/peerconnection/client/conductor.h	(revision 5193)
++++ talk/examples/peerconnection/client/conductor.h	(working copy)
+@@ -34,8 +34,8 @@
+ #include <set>
+ #include <string>
+ 
++#include "talk/examples/peerconnection/client/peer_connection_client.h"
+ #include "talk/examples/peerconnection/client/main_wnd.h"
+-#include "talk/examples/peerconnection/client/peer_connection_client.h"
+ #include "talk/app/webrtc/mediastreaminterface.h"
+ #include "talk/app/webrtc/peerconnectioninterface.h"
+ #include "talk/base/scoped_ptr.h"
+@@ -51,8 +51,7 @@
+ class Conductor
+   : public webrtc::PeerConnectionObserver,
+     public webrtc::CreateSessionDescriptionObserver,
+-    public PeerConnectionClientObserver,
+-    public MainWndCallback {
++    public PeerConnectionClientObserver {
+  public:
+   enum CallbackID {
+     MEDIA_CHANNELS_INITIALIZED = 1,
+@@ -63,13 +62,13 @@
+     STREAM_REMOVED,
+   };
+ 
+-  Conductor(PeerConnectionClient* client, MainWindow* main_wnd);
++  Conductor(PeerConnectionClient* client, std::deque<std::string*>* remote_messages, const std::string& device);
+ 
+   bool connection_active() const;
+ 
+   virtual void Close();
+ 
+- protected:
++
+   ~Conductor();
+   bool InitializePeerConnection();
+   void DeletePeerConnection();
+@@ -130,15 +129,16 @@
+   void SendMessage(const std::string& json_object);
+ 
+   int peer_id_;
++  std::deque<std::string*>* remote_messages_;
+   talk_base::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
+   talk_base::scoped_refptr<webrtc::PeerConnectionFactoryInterface>
+       peer_connection_factory_;
+   PeerConnectionClient* client_;
+-  MainWindow* main_wnd_;
+   std::deque<std::string*> pending_messages_;
+   std::map<std::string, talk_base::scoped_refptr<webrtc::MediaStreamInterface> >
+       active_streams_;
+   std::string server_;
++  std::string device_;
+ };
+ 
+ #endif  // PEERCONNECTION_SAMPLES_CLIENT_CONDUCTOR_H_
+Index: talk/examples/peerconnection/client/peer_connection_client.cc
+===================================================================
+--- talk/examples/peerconnection/client/peer_connection_client.cc	(revision 5193)
++++ talk/examples/peerconnection/client/peer_connection_client.cc	(working copy)
+@@ -271,6 +271,7 @@
+ 
+ void PeerConnectionClient::OnMessageFromPeer(int peer_id,
+                                              const std::string& message) {
++  LOG(INFO) << "STWD :: PCC OMFP";
+   if (message.length() == (sizeof(kByeMessage) - 1) &&
+       message.compare(kByeMessage) == 0) {
+     callback_->OnPeerDisconnected(peer_id);
+Index: talk/examples/peerconnection/client/linux/main.cc
+===================================================================
+--- talk/examples/peerconnection/client/linux/main.cc	(revision 5193)
++++ talk/examples/peerconnection/client/linux/main.cc	(working copy)
+@@ -25,19 +25,21 @@
+  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
+-#include <gtk/gtk.h>
+-
++#include "talk/base/logging.h"
+ #include "talk/examples/peerconnection/client/conductor.h"
+ #include "talk/examples/peerconnection/client/flagdefs.h"
+-#include "talk/examples/peerconnection/client/linux/main_wnd.h"
+ #include "talk/examples/peerconnection/client/peer_connection_client.h"
+ 
+ #include "talk/base/thread.h"
+ 
++#include <string>
++
++std::deque<std::string*> remote_messages;
++
+ class CustomSocketServer : public talk_base::PhysicalSocketServer {
+  public:
+-  CustomSocketServer(talk_base::Thread* thread, GtkMainWnd* wnd)
+-      : thread_(thread), wnd_(wnd), conductor_(NULL), client_(NULL) {}
++  CustomSocketServer(talk_base::Thread* thread)
++      : thread_(thread), conductor_(NULL), client_(NULL) {}
+   virtual ~CustomSocketServer() {}
+ 
+   void set_client(PeerConnectionClient* client) { client_ = client; }
+@@ -45,34 +47,24 @@
+ 
+   // Override so that we can also pump the GTK message loop.
+   virtual bool Wait(int cms, bool process_io) {
+-    // Pump GTK events.
+-    // TODO: We really should move either the socket server or UI to a
+-    // different thread.  Alternatively we could look at merging the two loops
+-    // by implementing a dispatcher for the socket server and/or use
+-    // g_main_context_set_poll_func.
+-      while (gtk_events_pending())
+-        gtk_main_iteration();
+ 
+-    if (!wnd_->IsWindow() && !conductor_->connection_active() &&
+-        client_ != NULL && !client_->is_connected()) {
+-      thread_->Quit();
+-    }
++      if (!remote_messages.empty()) {
++        std::string *msg = remote_messages.front();
++        remote_messages.pop_front();
++	conductor_->UIThreadCallback(Conductor::SEND_MESSAGE_TO_PEER, msg);
++      }
++
+     return talk_base::PhysicalSocketServer::Wait(0/*cms == -1 ? 1 : cms*/,
+                                                  process_io);
+   }
+ 
+  protected:
+   talk_base::Thread* thread_;
+-  GtkMainWnd* wnd_;
+   Conductor* conductor_;
+   PeerConnectionClient* client_;
+ };
+ 
+ int main(int argc, char* argv[]) {
+-  gtk_init(&argc, &argv);
+-  g_type_init();
+-  g_thread_init(NULL);
+-
+   FlagList::SetFlagsFromCommandLine(&argc, argv, true);
+   if (FLAG_help) {
+     FlagList::Print(NULL, false);
+@@ -82,30 +74,26 @@
+   // Abort if the user specifies a port that is outside the allowed
+   // range [1, 65535].
+   if ((FLAG_port < 1) || (FLAG_port > 65535)) {
+-    printf("Error: %i is not a valid port.\n", FLAG_port);
++    //LOG(LS_ERROR) << "Error: %i is not a valid port.\n", FLAG_port);
+     return -1;
+   }
+ 
+-  GtkMainWnd wnd(FLAG_server, FLAG_port, FLAG_autoconnect, FLAG_autocall);
+-  wnd.Create();
+-
+   talk_base::AutoThread auto_thread;
+   talk_base::Thread* thread = talk_base::Thread::Current();
+-  CustomSocketServer socket_server(thread, &wnd);
++  CustomSocketServer socket_server(thread);
+   thread->set_socketserver(&socket_server);
+ 
+   // Must be constructed after we set the socketserver.
+   PeerConnectionClient client;
+-  talk_base::scoped_refptr<Conductor> conductor(
+-      new talk_base::RefCountedObject<Conductor>(&client, &wnd));
++    talk_base::scoped_refptr<Conductor> conductor(
++      new talk_base::RefCountedObject<Conductor>(&client, &remote_messages, FLAG_videodevice));
+   socket_server.set_client(&client);
+   socket_server.set_conductor(conductor);
+ 
++  conductor->StartLogin(FLAG_server, FLAG_port);
++  //conductor->ConnectToPeer(1);
+   thread->Run();
+ 
+-  // gtk_main();
+-  wnd.Destroy();
+-
+   thread->set_socketserver(NULL);
+   // TODO: Run the Gtk main loop to tear down the connection.
+   //while (gtk_events_pending()) {
+Index: talk/examples/peerconnection/client/main_wnd.cc
+===================================================================
+--- talk/examples/peerconnection/client/main_wnd.cc	(revision 5193)
++++ talk/examples/peerconnection/client/main_wnd.cc	(working copy)
+@@ -33,573 +33,14 @@
+ #include "talk/base/logging.h"
+ #include "talk/examples/peerconnection/client/defaults.h"
+ 
+-ATOM MainWnd::wnd_class_ = 0;
+-const wchar_t MainWnd::kClassName[] = L"WebRTC_MainWnd";
++MainWindow::MainWindow() {
+ 
+-namespace {
+-
+-const char kConnecting[] = "Connecting... ";
+-const char kNoVideoStreams[] = "(no video streams either way)";
+-const char kNoIncomingStream[] = "(no incoming video)";
+-
+-void CalculateWindowSizeForText(HWND wnd, const wchar_t* text,
+-                                size_t* width, size_t* height) {
+-  HDC dc = ::GetDC(wnd);
+-  RECT text_rc = {0};
+-  ::DrawText(dc, text, -1, &text_rc, DT_CALCRECT | DT_SINGLELINE);
+-  ::ReleaseDC(wnd, dc);
+-  RECT client, window;
+-  ::GetClientRect(wnd, &client);
+-  ::GetWindowRect(wnd, &window);
+-
+-  *width = text_rc.right - text_rc.left;
+-  *width += (window.right - window.left) -
+-            (client.right - client.left);
+-  *height = text_rc.bottom - text_rc.top;
+-  *height += (window.bottom - window.top) -
+-             (client.bottom - client.top);
+ }
+ 
+-HFONT GetDefaultFont() {
+-  static HFONT font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+-  return font;
+-}
++MainWindow::~MainWindow() {
+ 
+-std::string GetWindowText(HWND wnd) {
+-  char text[MAX_PATH] = {0};
+-  ::GetWindowTextA(wnd, &text[0], ARRAYSIZE(text));
+-  return text;
+ }
+-
+-void AddListBoxItem(HWND listbox, const std::string& str, LPARAM item_data) {
+-  LRESULT index = ::SendMessageA(listbox, LB_ADDSTRING, 0,
+-      reinterpret_cast<LPARAM>(str.c_str()));
+-  ::SendMessageA(listbox, LB_SETITEMDATA, index, item_data);
++void MainWindow::QueueUIThreadCallback(int msg_id, void* data) {
++  data_.push_back(data);
+ }
+ 
+-}  // namespace
+-
+-MainWnd::MainWnd()
+-  : ui_(CONNECT_TO_SERVER), wnd_(NULL), edit1_(NULL), edit2_(NULL),
+-    label1_(NULL), label2_(NULL), button_(NULL), listbox_(NULL),
+-    destroyed_(false), callback_(NULL), nested_msg_(NULL) {
+-}
+-
+-MainWnd::~MainWnd() {
+-  ASSERT(!IsWindow());
+-}
+-
+-bool MainWnd::Create() {
+-  ASSERT(wnd_ == NULL);
+-  if (!RegisterWindowClass())
+-    return false;
+-
+-  ui_thread_id_ = ::GetCurrentThreadId();
+-  wnd_ = ::CreateWindowExW(WS_EX_OVERLAPPEDWINDOW, kClassName, L"WebRTC",
+-      WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN,
+-      CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+-      NULL, NULL, GetModuleHandle(NULL), this);
+-
+-  ::SendMessage(wnd_, WM_SETFONT, reinterpret_cast<WPARAM>(GetDefaultFont()),
+-                TRUE);
+-
+-  CreateChildWindows();
+-  SwitchToConnectUI();
+-
+-  return wnd_ != NULL;
+-}
+-
+-bool MainWnd::Destroy() {
+-  BOOL ret = FALSE;
+-  if (IsWindow()) {
+-    ret = ::DestroyWindow(wnd_);
+-  }
+-
+-  return ret != FALSE;
+-}
+-
+-void MainWnd::RegisterObserver(MainWndCallback* callback) {
+-  callback_ = callback;
+-}
+-
+-bool MainWnd::IsWindow() {
+-  return wnd_ && ::IsWindow(wnd_) != FALSE;
+-}
+-
+-bool MainWnd::PreTranslateMessage(MSG* msg) {
+-  bool ret = false;
+-  if (msg->message == WM_CHAR) {
+-    if (msg->wParam == VK_TAB) {
+-      HandleTabbing();
+-      ret = true;
+-    } else if (msg->wParam == VK_RETURN) {
+-      OnDefaultAction();
+-      ret = true;
+-    } else if (msg->wParam == VK_ESCAPE) {
+-      if (callback_) {
+-        if (ui_ == STREAMING) {
+-          callback_->DisconnectFromCurrentPeer();
+-        } else {
+-          callback_->DisconnectFromServer();
+-        }
+-      }
+-    }
+-  } else if (msg->hwnd == NULL && msg->message == UI_THREAD_CALLBACK) {
+-    callback_->UIThreadCallback(static_cast<int>(msg->wParam),
+-                                reinterpret_cast<void*>(msg->lParam));
+-    ret = true;
+-  }
+-  return ret;
+-}
+-
+-void MainWnd::SwitchToConnectUI() {
+-  ASSERT(IsWindow());
+-  LayoutPeerListUI(false);
+-  ui_ = CONNECT_TO_SERVER;
+-  LayoutConnectUI(true);
+-  ::SetFocus(edit1_);
+-}
+-
+-void MainWnd::SwitchToPeerList(const Peers& peers) {
+-  LayoutConnectUI(false);
+-
+-  ::SendMessage(listbox_, LB_RESETCONTENT, 0, 0);
+-
+-  AddListBoxItem(listbox_, "List of currently connected peers:", -1);
+-  Peers::const_iterator i = peers.begin();
+-  for (; i != peers.end(); ++i)
+-    AddListBoxItem(listbox_, i->second.c_str(), i->first);
+-
+-  ui_ = LIST_PEERS;
+-  LayoutPeerListUI(true);
+-  ::SetFocus(listbox_);
+-}
+-
+-void MainWnd::SwitchToStreamingUI() {
+-  LayoutConnectUI(false);
+-  LayoutPeerListUI(false);
+-  ui_ = STREAMING;
+-}
+-
+-void MainWnd::MessageBox(const char* caption, const char* text, bool is_error) {
+-  DWORD flags = MB_OK;
+-  if (is_error)
+-    flags |= MB_ICONERROR;
+-
+-  ::MessageBoxA(handle(), text, caption, flags);
+-}
+-
+-
+-void MainWnd::StartLocalRenderer(webrtc::VideoTrackInterface* local_video) {
+-  local_renderer_.reset(new VideoRenderer(handle(), 1, 1, local_video));
+-}
+-
+-void MainWnd::StopLocalRenderer() {
+-  local_renderer_.reset();
+-}
+-
+-void MainWnd::StartRemoteRenderer(webrtc::VideoTrackInterface* remote_video) {
+-  remote_renderer_.reset(new VideoRenderer(handle(), 1, 1, remote_video));
+-}
+-
+-void MainWnd::StopRemoteRenderer() {
+-  remote_renderer_.reset();
+-}
+-
+-void MainWnd::QueueUIThreadCallback(int msg_id, void* data) {
+-  ::PostThreadMessage(ui_thread_id_, UI_THREAD_CALLBACK,
+-      static_cast<WPARAM>(msg_id), reinterpret_cast<LPARAM>(data));
+-}
+-
+-void MainWnd::OnPaint() {
+-  PAINTSTRUCT ps;
+-  ::BeginPaint(handle(), &ps);
+-
+-  RECT rc;
+-  ::GetClientRect(handle(), &rc);
+-
+-  VideoRenderer* local_renderer = local_renderer_.get();
+-  VideoRenderer* remote_renderer = remote_renderer_.get();
+-  if (ui_ == STREAMING && remote_renderer && local_renderer) {
+-    AutoLock<VideoRenderer> local_lock(local_renderer);
+-    AutoLock<VideoRenderer> remote_lock(remote_renderer);
+-
+-    const BITMAPINFO& bmi = remote_renderer->bmi();
+-    int height = abs(bmi.bmiHeader.biHeight);
+-    int width = bmi.bmiHeader.biWidth;
+-
+-    const uint8* image = remote_renderer->image();
+-    if (image != NULL) {
+-      HDC dc_mem = ::CreateCompatibleDC(ps.hdc);
+-      ::SetStretchBltMode(dc_mem, HALFTONE);
+-
+-      // Set the map mode so that the ratio will be maintained for us.
+-      HDC all_dc[] = { ps.hdc, dc_mem };
+-      for (int i = 0; i < ARRAY_SIZE(all_dc); ++i) {
+-        SetMapMode(all_dc[i], MM_ISOTROPIC);
+-        SetWindowExtEx(all_dc[i], width, height, NULL);
+-        SetViewportExtEx(all_dc[i], rc.right, rc.bottom, NULL);
+-      }
+-
+-      HBITMAP bmp_mem = ::CreateCompatibleBitmap(ps.hdc, rc.right, rc.bottom);
+-      HGDIOBJ bmp_old = ::SelectObject(dc_mem, bmp_mem);
+-
+-      POINT logical_area = { rc.right, rc.bottom };
+-      DPtoLP(ps.hdc, &logical_area, 1);
+-
+-      HBRUSH brush = ::CreateSolidBrush(RGB(0, 0, 0));
+-      RECT logical_rect = {0, 0, logical_area.x, logical_area.y };
+-      ::FillRect(dc_mem, &logical_rect, brush);
+-      ::DeleteObject(brush);
+-
+-      int x = (logical_area.x / 2) - (width / 2);
+-      int y = (logical_area.y / 2) - (height / 2);
+-
+-      StretchDIBits(dc_mem, x, y, width, height,
+-                    0, 0, width, height, image, &bmi, DIB_RGB_COLORS, SRCCOPY);
+-
+-      if ((rc.right - rc.left) > 200 && (rc.bottom - rc.top) > 200) {
+-        const BITMAPINFO& bmi = local_renderer->bmi();
+-        image = local_renderer->image();
+-        int thumb_width = bmi.bmiHeader.biWidth / 4;
+-        int thumb_height = abs(bmi.bmiHeader.biHeight) / 4;
+-        StretchDIBits(dc_mem,
+-            logical_area.x - thumb_width - 10,
+-            logical_area.y - thumb_height - 10,
+-            thumb_width, thumb_height,
+-            0, 0, bmi.bmiHeader.biWidth, -bmi.bmiHeader.biHeight,
+-            image, &bmi, DIB_RGB_COLORS, SRCCOPY);
+-      }
+-
+-      BitBlt(ps.hdc, 0, 0, logical_area.x, logical_area.y,
+-             dc_mem, 0, 0, SRCCOPY);
+-
+-      // Cleanup.
+-      ::SelectObject(dc_mem, bmp_old);
+-      ::DeleteObject(bmp_mem);
+-      ::DeleteDC(dc_mem);
+-    } else {
+-      // We're still waiting for the video stream to be initialized.
+-      HBRUSH brush = ::CreateSolidBrush(RGB(0, 0, 0));
+-      ::FillRect(ps.hdc, &rc, brush);
+-      ::DeleteObject(brush);
+-
+-      HGDIOBJ old_font = ::SelectObject(ps.hdc, GetDefaultFont());
+-      ::SetTextColor(ps.hdc, RGB(0xff, 0xff, 0xff));
+-      ::SetBkMode(ps.hdc, TRANSPARENT);
+-
+-      std::string text(kConnecting);
+-      if (!local_renderer->image()) {
+-        text += kNoVideoStreams;
+-      } else {
+-        text += kNoIncomingStream;
+-      }
+-      ::DrawTextA(ps.hdc, text.c_str(), -1, &rc,
+-          DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+-      ::SelectObject(ps.hdc, old_font);
+-    }
+-  } else {
+-    HBRUSH brush = ::CreateSolidBrush(::GetSysColor(COLOR_WINDOW));
+-    ::FillRect(ps.hdc, &rc, brush);
+-    ::DeleteObject(brush);
+-  }
+-
+-  ::EndPaint(handle(), &ps);
+-}
+-
+-void MainWnd::OnDestroyed() {
+-  PostQuitMessage(0);
+-}
+-
+-void MainWnd::OnDefaultAction() {
+-  if (!callback_)
+-    return;
+-  if (ui_ == CONNECT_TO_SERVER) {
+-    std::string server(GetWindowText(edit1_));
+-    std::string port_str(GetWindowText(edit2_));
+-    int port = port_str.length() ? atoi(port_str.c_str()) : 0;
+-    callback_->StartLogin(server, port);
+-  } else if (ui_ == LIST_PEERS) {
+-    LRESULT sel = ::SendMessage(listbox_, LB_GETCURSEL, 0, 0);
+-    if (sel != LB_ERR) {
+-      LRESULT peer_id = ::SendMessage(listbox_, LB_GETITEMDATA, sel, 0);
+-      if (peer_id != -1 && callback_) {
+-        callback_->ConnectToPeer(peer_id);
+-      }
+-    }
+-  } else {
+-    MessageBoxA(wnd_, "OK!", "Yeah", MB_OK);
+-  }
+-}
+-
+-bool MainWnd::OnMessage(UINT msg, WPARAM wp, LPARAM lp, LRESULT* result) {
+-  switch (msg) {
+-    case WM_ERASEBKGND:
+-      *result = TRUE;
+-      return true;
+-
+-    case WM_PAINT:
+-      OnPaint();
+-      return true;
+-
+-    case WM_SETFOCUS:
+-      if (ui_ == CONNECT_TO_SERVER) {
+-        SetFocus(edit1_);
+-      } else if (ui_ == LIST_PEERS) {
+-        SetFocus(listbox_);
+-      }
+-      return true;
+-
+-    case WM_SIZE:
+-      if (ui_ == CONNECT_TO_SERVER) {
+-        LayoutConnectUI(true);
+-      } else if (ui_ == LIST_PEERS) {
+-        LayoutPeerListUI(true);
+-      }
+-      break;
+-
+-    case WM_CTLCOLORSTATIC:
+-      *result = reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+-      return true;
+-
+-    case WM_COMMAND:
+-      if (button_ == reinterpret_cast<HWND>(lp)) {
+-        if (BN_CLICKED == HIWORD(wp))
+-          OnDefaultAction();
+-      } else if (listbox_ == reinterpret_cast<HWND>(lp)) {
+-        if (LBN_DBLCLK == HIWORD(wp)) {
+-          OnDefaultAction();
+-        }
+-      }
+-      return true;
+-
+-    case WM_CLOSE:
+-      if (callback_)
+-        callback_->Close();
+-      break;
+-  }
+-  return false;
+-}
+-
+-// static
+-LRESULT CALLBACK MainWnd::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+-  MainWnd* me = reinterpret_cast<MainWnd*>(
+-      ::GetWindowLongPtr(hwnd, GWLP_USERDATA));
+-  if (!me && WM_CREATE == msg) {
+-    CREATESTRUCT* cs = reinterpret_cast<CREATESTRUCT*>(lp);
+-    me = reinterpret_cast<MainWnd*>(cs->lpCreateParams);
+-    me->wnd_ = hwnd;
+-    ::SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(me));
+-  }
+-
+-  LRESULT result = 0;
+-  if (me) {
+-    void* prev_nested_msg = me->nested_msg_;
+-    me->nested_msg_ = &msg;
+-
+-    bool handled = me->OnMessage(msg, wp, lp, &result);
+-    if (WM_NCDESTROY == msg) {
+-      me->destroyed_ = true;
+-    } else if (!handled) {
+-      result = ::DefWindowProc(hwnd, msg, wp, lp);
+-    }
+-
+-    if (me->destroyed_ && prev_nested_msg == NULL) {
+-      me->OnDestroyed();
+-      me->wnd_ = NULL;
+-      me->destroyed_ = false;
+-    }
+-
+-    me->nested_msg_ = prev_nested_msg;
+-  } else {
+-    result = ::DefWindowProc(hwnd, msg, wp, lp);
+-  }
+-
+-  return result;
+-}
+-
+-// static
+-bool MainWnd::RegisterWindowClass() {
+-  if (wnd_class_)
+-    return true;
+-
+-  WNDCLASSEX wcex = { sizeof(WNDCLASSEX) };
+-  wcex.style = CS_DBLCLKS;
+-  wcex.hInstance = GetModuleHandle(NULL);
+-  wcex.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+-  wcex.hCursor = ::LoadCursor(NULL, IDC_ARROW);
+-  wcex.lpfnWndProc = &WndProc;
+-  wcex.lpszClassName = kClassName;
+-  wnd_class_ = ::RegisterClassEx(&wcex);
+-  ASSERT(wnd_class_ != 0);
+-  return wnd_class_ != 0;
+-}
+-
+-void MainWnd::CreateChildWindow(HWND* wnd, MainWnd::ChildWindowID id,
+-                                const wchar_t* class_name, DWORD control_style,
+-                                DWORD ex_style) {
+-  if (::IsWindow(*wnd))
+-    return;
+-
+-  // Child windows are invisible at first, and shown after being resized.
+-  DWORD style = WS_CHILD | control_style;
+-  *wnd = ::CreateWindowEx(ex_style, class_name, L"", style,
+-                          100, 100, 100, 100, wnd_,
+-                          reinterpret_cast<HMENU>(id),
+-                          GetModuleHandle(NULL), NULL);
+-  ASSERT(::IsWindow(*wnd) != FALSE);
+-  ::SendMessage(*wnd, WM_SETFONT, reinterpret_cast<WPARAM>(GetDefaultFont()),
+-                TRUE);
+-}
+-
+-void MainWnd::CreateChildWindows() {
+-  // Create the child windows in tab order.
+-  CreateChildWindow(&label1_, LABEL1_ID, L"Static", ES_CENTER | ES_READONLY, 0);
+-  CreateChildWindow(&edit1_, EDIT_ID, L"Edit",
+-                    ES_LEFT | ES_NOHIDESEL | WS_TABSTOP, WS_EX_CLIENTEDGE);
+-  CreateChildWindow(&label2_, LABEL2_ID, L"Static", ES_CENTER | ES_READONLY, 0);
+-  CreateChildWindow(&edit2_, EDIT_ID, L"Edit",
+-                    ES_LEFT | ES_NOHIDESEL | WS_TABSTOP, WS_EX_CLIENTEDGE);
+-  CreateChildWindow(&button_, BUTTON_ID, L"Button", BS_CENTER | WS_TABSTOP, 0);
+-
+-  CreateChildWindow(&listbox_, LISTBOX_ID, L"ListBox",
+-                    LBS_HASSTRINGS | LBS_NOTIFY, WS_EX_CLIENTEDGE);
+-
+-  ::SetWindowTextA(edit1_, GetDefaultServerName().c_str());
+-  ::SetWindowTextA(edit2_, "8888");
+-}
+-
+-void MainWnd::LayoutConnectUI(bool show) {
+-  struct Windows {
+-    HWND wnd;
+-    const wchar_t* text;
+-    size_t width;
+-    size_t height;
+-  } windows[] = {
+-    { label1_, L"Server" },
+-    { edit1_, L"XXXyyyYYYgggXXXyyyYYYggg" },
+-    { label2_, L":" },
+-    { edit2_, L"XyXyX" },
+-    { button_, L"Connect" },
+-  };
+-
+-  if (show) {
+-    const size_t kSeparator = 5;
+-    size_t total_width = (ARRAYSIZE(windows) - 1) * kSeparator;
+-
+-    for (size_t i = 0; i < ARRAYSIZE(windows); ++i) {
+-      CalculateWindowSizeForText(windows[i].wnd, windows[i].text,
+-                                 &windows[i].width, &windows[i].height);
+-      total_width += windows[i].width;
+-    }
+-
+-    RECT rc;
+-    ::GetClientRect(wnd_, &rc);
+-    size_t x = (rc.right / 2) - (total_width / 2);
+-    size_t y = rc.bottom / 2;
+-    for (size_t i = 0; i < ARRAYSIZE(windows); ++i) {
+-      size_t top = y - (windows[i].height / 2);
+-      ::MoveWindow(windows[i].wnd, static_cast<int>(x), static_cast<int>(top),
+-                   static_cast<int>(windows[i].width),
+-                   static_cast<int>(windows[i].height),
+-                   TRUE);
+-      x += kSeparator + windows[i].width;
+-      if (windows[i].text[0] != 'X')
+-        ::SetWindowText(windows[i].wnd, windows[i].text);
+-      ::ShowWindow(windows[i].wnd, SW_SHOWNA);
+-    }
+-  } else {
+-    for (size_t i = 0; i < ARRAYSIZE(windows); ++i) {
+-      ::ShowWindow(windows[i].wnd, SW_HIDE);
+-    }
+-  }
+-}
+-
+-void MainWnd::LayoutPeerListUI(bool show) {
+-  if (show) {
+-    RECT rc;
+-    ::GetClientRect(wnd_, &rc);
+-    ::MoveWindow(listbox_, 0, 0, rc.right, rc.bottom, TRUE);
+-    ::ShowWindow(listbox_, SW_SHOWNA);
+-  } else {
+-    ::ShowWindow(listbox_, SW_HIDE);
+-    InvalidateRect(wnd_, NULL, TRUE);
+-  }
+-}
+-
+-void MainWnd::HandleTabbing() {
+-  bool shift = ((::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
+-  UINT next_cmd = shift ? GW_HWNDPREV : GW_HWNDNEXT;
+-  UINT loop_around_cmd = shift ? GW_HWNDLAST : GW_HWNDFIRST;
+-  HWND focus = GetFocus(), next;
+-  do {
+-    next = ::GetWindow(focus, next_cmd);
+-    if (IsWindowVisible(next) &&
+-        (GetWindowLong(next, GWL_STYLE) & WS_TABSTOP)) {
+-      break;
+-    }
+-
+-    if (!next) {
+-      next = ::GetWindow(focus, loop_around_cmd);
+-      if (IsWindowVisible(next) &&
+-          (GetWindowLong(next, GWL_STYLE) & WS_TABSTOP)) {
+-        break;
+-      }
+-    }
+-    focus = next;
+-  } while (true);
+-  ::SetFocus(next);
+-}
+-
+-//
+-// MainWnd::VideoRenderer
+-//
+-
+-MainWnd::VideoRenderer::VideoRenderer(
+-    HWND wnd, int width, int height,
+-    webrtc::VideoTrackInterface* track_to_render)
+-    : wnd_(wnd), rendered_track_(track_to_render) {
+-  ::InitializeCriticalSection(&buffer_lock_);
+-  ZeroMemory(&bmi_, sizeof(bmi_));
+-  bmi_.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+-  bmi_.bmiHeader.biPlanes = 1;
+-  bmi_.bmiHeader.biBitCount = 32;
+-  bmi_.bmiHeader.biCompression = BI_RGB;
+-  bmi_.bmiHeader.biWidth = width;
+-  bmi_.bmiHeader.biHeight = -height;
+-  bmi_.bmiHeader.biSizeImage = width * height *
+-                              (bmi_.bmiHeader.biBitCount >> 3);
+-  rendered_track_->AddRenderer(this);
+-}
+-
+-MainWnd::VideoRenderer::~VideoRenderer() {
+-  rendered_track_->RemoveRenderer(this);
+-  ::DeleteCriticalSection(&buffer_lock_);
+-}
+-
+-void MainWnd::VideoRenderer::SetSize(int width, int height) {
+-  AutoLock<VideoRenderer> lock(this);
+-
+-  bmi_.bmiHeader.biWidth = width;
+-  bmi_.bmiHeader.biHeight = -height;
+-  bmi_.bmiHeader.biSizeImage = width * height *
+-                               (bmi_.bmiHeader.biBitCount >> 3);
+-  image_.reset(new uint8[bmi_.bmiHeader.biSizeImage]);
+-}
+-
+-void MainWnd::VideoRenderer::RenderFrame(const cricket::VideoFrame* frame) {
+-  if (!frame)
+-    return;
+-
+-  {
+-    AutoLock<VideoRenderer> lock(this);
+-
+-    ASSERT(image_.get() != NULL);
+-    frame->ConvertToRgbBuffer(cricket::FOURCC_ARGB,
+-                              image_.get(),
+-                              bmi_.bmiHeader.biSizeImage,
+-                              bmi_.bmiHeader.biWidth *
+-                              bmi_.bmiHeader.biBitCount / 8);
+-  }
+-  InvalidateRect(wnd_, NULL, TRUE);
+-}
+Index: talk/examples/peerconnection/client/flagdefs.h
+===================================================================
+--- talk/examples/peerconnection/client/flagdefs.h	(revision 5193)
++++ talk/examples/peerconnection/client/flagdefs.h	(working copy)
+@@ -41,6 +41,7 @@
+ DEFINE_bool(autoconnect, false, "Connect to the server without user "
+                                 "intervention.");
+ DEFINE_string(server, "localhost", "The server to connect to.");
++DEFINE_string(videodevice, "/dev/video0", "The video device to use.");
+ DEFINE_int(port, kDefaultServerPort,
+            "The port on which the server is listening.");
+ DEFINE_bool(autocall, false, "Call the first available other client on "
+Index: talk/examples/peerconnection/client/main_wnd.h
+===================================================================
+--- talk/examples/peerconnection/client/main_wnd.h	(revision 5193)
++++ talk/examples/peerconnection/client/main_wnd.h	(working copy)
+@@ -31,183 +31,15 @@
+ 
+ #include <map>
+ #include <string>
++#include <deque>
+ 
+-#include "talk/app/webrtc/mediastreaminterface.h"
+-#include "talk/base/win32.h"
+-#include "talk/examples/peerconnection/client/peer_connection_client.h"
+-#include "talk/media/base/mediachannel.h"
+-#include "talk/media/base/videocommon.h"
+-#include "talk/media/base/videoframe.h"
+-#include "talk/media/base/videorenderer.h"
+-
+-class MainWndCallback {
+- public:
+-  virtual void StartLogin(const std::string& server, int port) = 0;
+-  virtual void DisconnectFromServer() = 0;
+-  virtual void ConnectToPeer(int peer_id) = 0;
+-  virtual void DisconnectFromCurrentPeer() = 0;
+-  virtual void UIThreadCallback(int msg_id, void* data) = 0;
+-  virtual void Close() = 0;
+- protected:
+-  virtual ~MainWndCallback() {}
+-};
+-
+-// Pure virtual interface for the main window.
+ class MainWindow {
+  public:
+   virtual ~MainWindow() {}
+-
+-  enum UI {
+-    CONNECT_TO_SERVER,
+-    LIST_PEERS,
+-    STREAMING,
+-  };
+-
+-  virtual void RegisterObserver(MainWndCallback* callback) = 0;
+-
+-  virtual bool IsWindow() = 0;
+-  virtual void MessageBox(const char* caption, const char* text,
+-                          bool is_error) = 0;
+-
+-  virtual UI current_ui() = 0;
+-
+-  virtual void SwitchToConnectUI() = 0;
+-  virtual void SwitchToPeerList(const Peers& peers) = 0;
+-  virtual void SwitchToStreamingUI() = 0;
+-
+-  virtual void StartLocalRenderer(webrtc::VideoTrackInterface* local_video) = 0;
+-  virtual void StopLocalRenderer() = 0;
+-  virtual void StartRemoteRenderer(webrtc::VideoTrackInterface* remote_video) = 0;
+-  virtual void StopRemoteRenderer() = 0;
+-
+-  virtual void QueueUIThreadCallback(int msg_id, void* data) = 0;
+-};
+-
+-#ifdef WIN32
+-
+-class MainWnd : public MainWindow {
+- public:
+-  static const wchar_t kClassName[];
+-
+-  enum WindowMessages {
+-    UI_THREAD_CALLBACK = WM_APP + 1,
+-  };
+-
+-  MainWnd();
+-  ~MainWnd();
+-
+-  bool Create();
+-  bool Destroy();
+-  bool PreTranslateMessage(MSG* msg);
+-
+-  virtual void RegisterObserver(MainWndCallback* callback);
+-  virtual bool IsWindow();
+-  virtual void SwitchToConnectUI();
+-  virtual void SwitchToPeerList(const Peers& peers);
+-  virtual void SwitchToStreamingUI();
+-  virtual void MessageBox(const char* caption, const char* text,
+-                          bool is_error);
+-  virtual UI current_ui() { return ui_; }
+-
+-  virtual void StartLocalRenderer(webrtc::VideoTrackInterface* local_video);
+-  virtual void StopLocalRenderer();
+-  virtual void StartRemoteRenderer(webrtc::VideoTrackInterface* remote_video);
+-  virtual void StopRemoteRenderer();
+-
+   virtual void QueueUIThreadCallback(int msg_id, void* data);
+ 
+-  HWND handle() const { return wnd_; }
+-
+-  class VideoRenderer : public webrtc::VideoRendererInterface {
+-   public:
+-    VideoRenderer(HWND wnd, int width, int height,
+-                  webrtc::VideoTrackInterface* track_to_render);
+-    virtual ~VideoRenderer();
+-
+-    void Lock() {
+-      ::EnterCriticalSection(&buffer_lock_);
+-    }
+-
+-    void Unlock() {
+-      ::LeaveCriticalSection(&buffer_lock_);
+-    }
+-
+-    // VideoRendererInterface implementation
+-    virtual void SetSize(int width, int height);
+-    virtual void RenderFrame(const cricket::VideoFrame* frame);
+-
+-    const BITMAPINFO& bmi() const { return bmi_; }
+-    const uint8* image() const { return image_.get(); }
+-
+-   protected:
+-    enum {
+-      SET_SIZE,
+-      RENDER_FRAME,
+-    };
+-
+-    HWND wnd_;
+-    BITMAPINFO bmi_;
+-    talk_base::scoped_ptr<uint8[]> image_;
+-    CRITICAL_SECTION buffer_lock_;
+-    talk_base::scoped_refptr<webrtc::VideoTrackInterface> rendered_track_;
+-  };
+-
+-  // A little helper class to make sure we always to proper locking and
+-  // unlocking when working with VideoRenderer buffers.
+-  template <typename T>
+-  class AutoLock {
+-   public:
+-    explicit AutoLock(T* obj) : obj_(obj) { obj_->Lock(); }
+-    ~AutoLock() { obj_->Unlock(); }
+-   protected:
+-    T* obj_;
+-  };
+-
+- protected:
+-  enum ChildWindowID {
+-    EDIT_ID = 1,
+-    BUTTON_ID,
+-    LABEL1_ID,
+-    LABEL2_ID,
+-    LISTBOX_ID,
+-  };
+-
+-  void OnPaint();
+-  void OnDestroyed();
+-
+-  void OnDefaultAction();
+-
+-  bool OnMessage(UINT msg, WPARAM wp, LPARAM lp, LRESULT* result);
+-
+-  static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+-  static bool RegisterWindowClass();
+-
+-  void CreateChildWindow(HWND* wnd, ChildWindowID id, const wchar_t* class_name,
+-                         DWORD control_style, DWORD ex_style);
+-  void CreateChildWindows();
+-
+-  void LayoutConnectUI(bool show);
+-  void LayoutPeerListUI(bool show);
+-
+-  void HandleTabbing();
+-
+- private:
+-  talk_base::scoped_ptr<VideoRenderer> local_renderer_;
+-  talk_base::scoped_ptr<VideoRenderer> remote_renderer_;
+-  UI ui_;
+-  HWND wnd_;
+-  DWORD ui_thread_id_;
+-  HWND edit1_;
+-  HWND edit2_;
+-  HWND label1_;
+-  HWND label2_;
+-  HWND button_;
+-  HWND listbox_;
+-  bool destroyed_;
+-  void* nested_msg_;
+-  MainWndCallback* callback_;
+-  static ATOM wnd_class_;
++  std::deque<void*> data_;
++  
+ };
+-#endif  // WIN32
+ 
+ #endif  // PEERCONNECTION_SAMPLES_CLIENT_MAIN_WND_H_
+Index: talk/examples/peerconnection/peerconnection.scons
+===================================================================
+--- talk/examples/peerconnection/peerconnection.scons	(revision 5193)
++++ talk/examples/peerconnection/peerconnection.scons	(working copy)
+@@ -36,14 +36,9 @@
+       'client/conductor.cc',
+       'client/defaults.cc',
+       'client/peer_connection_client.cc',
++      'client/main_wnd.cc',
+       'client/linux/main.cc',
+-      'client/linux/main_wnd.cc',
+     ],
+-    lin_packages = [
+-      'glib-2.0',
+-      'gobject-2.0',
+-      'gtk+-2.0',
+-    ],
+     lin_libs = [
+       'sound',
+     ],
+Index: talk/media/webrtc/webrtcvideocapturer.cc
+===================================================================
+--- talk/media/webrtc/webrtcvideocapturer.cc	(revision 5193)
++++ talk/media/webrtc/webrtcvideocapturer.cc	(working copy)
+@@ -153,23 +153,27 @@
+   // Find the desired camera, by name.
+   // In the future, comparing IDs will be more robust.
+   // TODO(juberti): Figure what's needed to allow this.
++ 
+   int num_cams = info->NumberOfDevices();
+   char vcm_id[256] = "";
++  // There's an issue, particularly with the PS3 eye camera where this check doesn't work
+   bool found = false;
+   for (int index = 0; index < num_cams; ++index) {
+     char vcm_name[256];
+     if (info->GetDeviceName(index, vcm_name, ARRAY_SIZE(vcm_name),
+                             vcm_id, ARRAY_SIZE(vcm_id)) != -1) {
+-      if (device.name == reinterpret_cast<char*>(vcm_name)) {
++      if (device.name == reinterpret_cast<char*>(vcm_name) ||
++          device.id == reinterpret_cast<char*>(vcm_id)) {
+         found = true;
+         break;
+       }
+     }
+   }
++  
+   if (!found) {
+     LOG(LS_WARNING) << "Failed to find capturer for id: " << device.id;
+-    factory_->DestroyDeviceInfo(info);
+-    return false;
++    //factory_->DestroyDeviceInfo(info);
++    //return false;
+   }
+ 
+   // Enumerate the supported formats.
+Index: talk/app/webrtc/videosource.cc
+===================================================================
+--- talk/app/webrtc/videosource.cc	(revision 5193)
++++ talk/app/webrtc/videosource.cc	(working copy)
+@@ -73,7 +73,7 @@
+ // Default resolution. If no constraint is specified, this is the resolution we
+ // will use.
+ static const cricket::VideoFormatPod kDefaultFormat =
+-    {640, 480, FPS_TO_INTERVAL(30), cricket::FOURCC_ANY};
++    {320, 240, FPS_TO_INTERVAL(30), cricket::FOURCC_ANY};
+ 
+ // List of formats used if the camera doesn't support capability enumeration.
+ static const cricket::VideoFormatPod kVideoFormats[] = {
+Index: talk/libjingle_examples.gyp
+===================================================================
+--- talk/libjingle_examples.gyp	(revision 5193)
++++ talk/libjingle_examples.gyp	(working copy)
+@@ -191,9 +191,9 @@
+             }],  # OS=="win"
+             ['OS=="linux"', {
+               'sources': [
+-                'examples/peerconnection/client/linux/main.cc',
+-                'examples/peerconnection/client/linux/main_wnd.cc',
+-                'examples/peerconnection/client/linux/main_wnd.h',
++                'examples/peerconnection/client/linux/main.cc'
++                'examples/peerconnection/client/main_wnd.cc',
++                'examples/peerconnection/client/main_wnd.h',
+               ],
+               'cflags': [
+                 '<!@(pkg-config --cflags glib-2.0 gobject-2.0 gtk+-2.0)',
+Index: talk/libjingle.gyp
+===================================================================
+--- talk/libjingle.gyp	(revision 5193)
++++ talk/libjingle.gyp	(working copy)
+@@ -33,7 +33,7 @@
+      'conditions': [
+        ['sysroot!=""', {
+          'variables': {
+-           'pkg-config': '../../../build/linux/pkg-config-wrapper "<(sysroot)" "<(target_arch)"',
++           'pkg-config': '/home/charles/libjingle/trunk/build/linux/pkg-config-wrapper "<(sysroot)" "<(target_arch)"',
+          },
+        }, {
+          'variables': {
