@@ -46,7 +46,7 @@ flask | HTTP server for watching video streams, online code editing, and configu
 
 Robot to DS streaming to date has been using MJPEG. However MJPEG suffers from large stream sizes due to not using interframe prediction. The limit of 7mbit/s from R58b is easily hit even with small images and low framerates. From the [FMS white paper](http://www.usfirst.org/sites/default/files/uploadedFiles/Robotics_Programs/FRC/Game_and_Season__Info/2013/FMSWhitePaper_RevA.pdf) a 320x240 image at 30% quality and 30fps consumes 3.7mbit/s. In testing, a similar quality WebRTC stream at the same frame rate and resolution takes less than 10% of that, at ~280kbit/s.
 
-[ocupus at 320x240@30 256kbps](https://raw2.github.com/hackcasual/ocupus/master/static/ocupus.png "Example")
+ ![ocupus at 320x240@30 256kbps](https://raw2.github.com/hackcasual/ocupus/master/static/ocupus.png "Example")
 
 #### OpenVPN
 
