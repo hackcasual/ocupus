@@ -2,6 +2,8 @@
 <head>
 <title>ocupus camera feed receiver</title>
 <!-- from server_test.html -->
+<script src="js/jquery-2.0.3.min.js"></script>
+<script src="js/adapter.js"></script>
 <script>
 var request = null;
 var hangingGet = null;
@@ -30,7 +32,7 @@ function myAnswer(description) {
 }
 
 function gotRemoteStream(e){
-  vid2.src = URL.createObjectURL(e.stream);
+  attachMediaStream(vid2, e.stream);
 }
 
 
@@ -72,7 +74,7 @@ function handlePeerMessage(peer_id, data) {
       var servers = null;
       haveOffer = true;
 
-      localPeerConnection = new webkitRTCPeerConnection(servers);
+      localPeerConnection = new RTCPeerConnection(servers);
 
       localPeerConnection.setRemoteDescription(new RTCSessionDescription(offerInfo));
 

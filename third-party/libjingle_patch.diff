@@ -1,319 +1,3 @@
-Index: talk/examples/peerconnection/client/conductor.cc
-===================================================================
---- talk/examples/peerconnection/client/conductor.cc	(revision 5193)
-+++ talk/examples/peerconnection/client/conductor.cc	(working copy)
-@@ -64,12 +64,13 @@
-   ~DummySetSessionDescriptionObserver() {}
- };
- 
--Conductor::Conductor(PeerConnectionClient* client, MainWindow* main_wnd)
-+Conductor::Conductor(PeerConnectionClient* client, std::deque<std::string*>* remote_messages, 
-+    const std::string& device)
-   : peer_id_(-1),
-     client_(client),
--    main_wnd_(main_wnd) {
-+    remote_messages_(remote_messages),
-+    device_(device) {
-   client_->RegisterObserver(this);
--  main_wnd->RegisterObserver(this);
- }
- 
- Conductor::~Conductor() {
-@@ -92,8 +93,7 @@
-   peer_connection_factory_  = webrtc::CreatePeerConnectionFactory();
- 
-   if (!peer_connection_factory_.get()) {
--    main_wnd_->MessageBox("Error",
--        "Failed to initialize PeerConnectionFactory", true);
-+    LOG(LS_ERROR) << "Failed to initialize PeerConnectionFactory";
-     DeletePeerConnection();
-     return false;
-   }
-@@ -107,8 +107,7 @@
-                                                                     NULL,
-                                                                     this);
-   if (!peer_connection_.get()) {
--    main_wnd_->MessageBox("Error",
--        "CreatePeerConnection failed", true);
-+    LOG(LS_ERROR) << "CreatePeerConnection failed";
-     DeletePeerConnection();
-   }
-   AddStreams();
-@@ -118,18 +117,13 @@
- void Conductor::DeletePeerConnection() {
-   peer_connection_ = NULL;
-   active_streams_.clear();
--  main_wnd_->StopLocalRenderer();
--  main_wnd_->StopRemoteRenderer();
-   peer_connection_factory_ = NULL;
-   peer_id_ = -1;
- }
- 
- void Conductor::EnsureStreamingUI() {
-   ASSERT(peer_connection_.get() != NULL);
--  if (main_wnd_->IsWindow()) {
--    if (main_wnd_->current_ui() != MainWindow::STREAMING)
--      main_wnd_->SwitchToStreamingUI();
--  }
-+  //TODO: This should be removed
- }
- 
- //
-@@ -138,7 +132,6 @@
- 
- void Conductor::OnError() {
-   LOG(LS_ERROR) << __FUNCTION__;
--  main_wnd_->QueueUIThreadCallback(PEER_CONNECTION_ERROR, NULL);
- }
- 
- // Called when a remote stream is added
-@@ -146,15 +139,12 @@
-   LOG(INFO) << __FUNCTION__ << " " << stream->label();
- 
-   stream->AddRef();
--  main_wnd_->QueueUIThreadCallback(NEW_STREAM_ADDED,
--                                   stream);
- }
- 
- void Conductor::OnRemoveStream(webrtc::MediaStreamInterface* stream) {
-   LOG(INFO) << __FUNCTION__ << " " << stream->label();
-   stream->AddRef();
--  main_wnd_->QueueUIThreadCallback(STREAM_REMOVED,
--                                   stream);
-+  stream->Release();
- }
- 
- void Conductor::OnIceCandidate(const webrtc::IceCandidateInterface* candidate) {
-@@ -179,35 +169,33 @@
- 
- void Conductor::OnSignedIn() {
-   LOG(INFO) << __FUNCTION__;
--  main_wnd_->SwitchToPeerList(client_->peers());
- }
- 
- void Conductor::OnDisconnected() {
-   LOG(INFO) << __FUNCTION__;
- 
-   DeletePeerConnection();
--
--  if (main_wnd_->IsWindow())
--    main_wnd_->SwitchToConnectUI();
- }
- 
- void Conductor::OnPeerConnected(int id, const std::string& name) {
-   LOG(INFO) << __FUNCTION__;
--  // Refresh the list if we're showing it.
--  if (main_wnd_->current_ui() == MainWindow::LIST_PEERS)
--    main_wnd_->SwitchToPeerList(client_->peers());
-+  LOG(INFO) << name << " connected";
-+  if (name == "receiver")
-+    ConnectToPeer(id);
- }
- 
- void Conductor::OnPeerDisconnected(int id) {
-   LOG(INFO) << __FUNCTION__;
-   if (id == peer_id_) {
-     LOG(INFO) << "Our peer disconnected";
--    main_wnd_->QueueUIThreadCallback(PEER_CONNECTION_CLOSED, NULL);
--  } else {
--    // Refresh the list if we're showing it.
--    if (main_wnd_->current_ui() == MainWindow::LIST_PEERS)
--      main_wnd_->SwitchToPeerList(client_->peers());
-+   std::map<std::string, talk_base::scoped_refptr<webrtc::MediaStreamInterface> >::iterator 
-+    stream_it = active_streams_.begin();
-+  for (; stream_it != active_streams_.end(); ++stream_it) {
-+   stream_it->second->Release();
-   }
-+  active_streams_.clear();
-+  DeletePeerConnection();
-+  }
- }
- 
- void Conductor::OnMessageFromPeer(int peer_id, const std::string& message) {
-@@ -215,6 +203,7 @@
-   ASSERT(!message.empty());
- 
-   if (!peer_connection_.get()) {
-+    LOG(INFO) << "Not currently connected to a peer ";
-     ASSERT(peer_id_ == -1);
-     peer_id_ = peer_id;
- 
-@@ -229,11 +218,10 @@
-                     "conversation with a different peer.";
-     return;
-   }
--
-   Json::Reader reader;
-   Json::Value jmessage;
-   if (!reader.parse(message, jmessage)) {
--    LOG(WARNING) << "Received unknown message. " << message;
-+    LOG(WARNING) << "Received unknown message " << message << " from peer " << peer_id;
-     return;
-   }
-   std::string type;
-@@ -274,11 +262,12 @@
-     talk_base::scoped_ptr<webrtc::IceCandidateInterface> candidate(
-         webrtc::CreateIceCandidate(sdp_mid, sdp_mlineindex, sdp));
-     if (!candidate.get()) {
--      LOG(WARNING) << "Can't parse received candidate message.";
-+      LOG(INFO) << "Can't parse received candidate message.";
-       return;
-     }
-+    LOG(INFO) << peer_connection_.get();
-     if (!peer_connection_->AddIceCandidate(candidate.get())) {
--      LOG(WARNING) << "Failed to apply the received candidate";
-+      LOG(INFO) << "Failed to apply the received candidate";
-       return;
-     }
-     LOG(INFO) << " Received candidate :" << message;
-@@ -288,12 +277,11 @@
- 
- void Conductor::OnMessageSent(int err) {
-   // Process the next pending message if any.
--  main_wnd_->QueueUIThreadCallback(SEND_MESSAGE_TO_PEER, NULL);
-+    remote_messages_->push_back(NULL);
- }
- 
- void Conductor::OnServerConnectionFailure() {
--    main_wnd_->MessageBox("Error", ("Failed to connect to " + server_).c_str(),
--                          true);
-+    LOG(LS_ERROR) << ("Failed to connect to " + server_).c_str();
- }
- 
- //
-@@ -317,8 +305,7 @@
-   ASSERT(peer_id != -1);
- 
-   if (peer_connection_.get()) {
--    main_wnd_->MessageBox("Error",
--        "We only support connecting to one peer at a time", true);
-+    LOG(LS_ERROR) << "We only support connecting to one peer at a time";
-     return;
-   }
- 
-@@ -326,7 +313,7 @@
-     peer_id_ = peer_id;
-     peer_connection_->CreateOffer(this, NULL);
-   } else {
--    main_wnd_->MessageBox("Error", "Failed to initialize PeerConnection", true);
-+    LOG(LS_ERROR) << "Failed to initialize PeerConnection";
-   }
- }
- 
-@@ -345,9 +332,11 @@
-   std::vector<cricket::Device>::iterator dev_it = devs.begin();
-   cricket::VideoCapturer* capturer = NULL;
-   for (; dev_it != devs.end(); ++dev_it) {
--    capturer = dev_manager->CreateVideoCapturer(*dev_it);
--    if (capturer != NULL)
--      break;
-+    if (dev_it->id == device_) {
-+      capturer = dev_manager->CreateVideoCapturer(*dev_it);
-+      if (capturer != NULL)
-+        break;
-+    }
-   }
-   return capturer;
- }
-@@ -356,21 +345,15 @@
-   if (active_streams_.find(kStreamLabel) != active_streams_.end())
-     return;  // Already added.
- 
--  talk_base::scoped_refptr<webrtc::AudioTrackInterface> audio_track(
--      peer_connection_factory_->CreateAudioTrack(
--          kAudioLabel, peer_connection_factory_->CreateAudioSource(NULL)));
--
-   talk_base::scoped_refptr<webrtc::VideoTrackInterface> video_track(
-       peer_connection_factory_->CreateVideoTrack(
-           kVideoLabel,
-           peer_connection_factory_->CreateVideoSource(OpenVideoCaptureDevice(),
-                                                       NULL)));
--  main_wnd_->StartLocalRenderer(video_track);
- 
-   talk_base::scoped_refptr<webrtc::MediaStreamInterface> stream =
-       peer_connection_factory_->CreateLocalMediaStream(kStreamLabel);
- 
--  stream->AddTrack(audio_track);
-   stream->AddTrack(video_track);
-   if (!peer_connection_->AddStream(stream, NULL)) {
-     LOG(LS_ERROR) << "Adding stream to PeerConnection failed";
-@@ -379,18 +362,15 @@
-                     talk_base::scoped_refptr<webrtc::MediaStreamInterface> >
-       MediaStreamPair;
-   active_streams_.insert(MediaStreamPair(stream->label(), stream));
--  main_wnd_->SwitchToStreamingUI();
- }
- 
- void Conductor::DisconnectFromCurrentPeer() {
-   LOG(INFO) << __FUNCTION__;
-   if (peer_connection_.get()) {
-     client_->SendHangUp(peer_id_);
--    DeletePeerConnection();
-+    
-   }
--
--  if (main_wnd_->IsWindow())
--    main_wnd_->SwitchToPeerList(client_->peers());
-+  DeletePeerConnection();
- }
- 
- void Conductor::UIThreadCallback(int msg_id, void* data) {
-@@ -401,15 +381,6 @@
- 
-       ASSERT(active_streams_.empty());
- 
--      if (main_wnd_->IsWindow()) {
--        if (client_->is_connected()) {
--          main_wnd_->SwitchToPeerList(client_->peers());
--        } else {
--          main_wnd_->SwitchToConnectUI();
--        }
--      } else {
--        DisconnectFromServer();
--      }
-       break;
- 
-     case SEND_MESSAGE_TO_PEER: {
-@@ -440,29 +411,14 @@
-     }
- 
-     case PEER_CONNECTION_ERROR:
--      main_wnd_->MessageBox("Error", "an unknown error occurred", true);
-       break;
- 
-+    // Doesn't recieve streams
-     case NEW_STREAM_ADDED: {
--      webrtc::MediaStreamInterface* stream =
--          reinterpret_cast<webrtc::MediaStreamInterface*>(
--          data);
--      webrtc::VideoTrackVector tracks = stream->GetVideoTracks();
--      // Only render the first track.
--      if (!tracks.empty()) {
--        webrtc::VideoTrackInterface* track = tracks[0];
--        main_wnd_->StartRemoteRenderer(track);
--      }
--      stream->Release();
-       break;
-     }
- 
-     case STREAM_REMOVED: {
--      // Remote peer stopped sending a stream.
--      webrtc::MediaStreamInterface* stream =
--          reinterpret_cast<webrtc::MediaStreamInterface*>(
--          data);
--      stream->Release();
-       break;
-     }
- 
-@@ -490,5 +446,7 @@
- 
- void Conductor::SendMessage(const std::string& json_object) {
-   std::string* msg = new std::string(json_object);
--  main_wnd_->QueueUIThreadCallback(SEND_MESSAGE_TO_PEER, msg);
-+  LOG(INFO) << __FUNCTION__;
-+  //UIThreadCallback(SEND_MESSAGE_TO_PEER, msg);
-+  remote_messages_->push_back(msg);
- }
 Index: talk/examples/peerconnection/client/conductor.h
 ===================================================================
 --- talk/examples/peerconnection/client/conductor.h	(revision 5193)
@@ -338,12 +22,13 @@ Index: talk/examples/peerconnection/client/conductor.h
   public:
    enum CallbackID {
      MEDIA_CHANNELS_INITIALIZED = 1,
-@@ -63,13 +62,13 @@
+@@ -63,13 +62,14 @@
      STREAM_REMOVED,
    };
  
 -  Conductor(PeerConnectionClient* client, MainWindow* main_wnd);
-+  Conductor(PeerConnectionClient* client, std::deque<std::string*>* remote_messages, const std::string& device);
++  Conductor(PeerConnectionClient* client, std::deque<std::string*>* remote_messages, 
++    const std::string& device, const std::string& client_name);
  
    bool connection_active() const;
  
@@ -354,7 +39,7 @@ Index: talk/examples/peerconnection/client/conductor.h
    ~Conductor();
    bool InitializePeerConnection();
    void DeletePeerConnection();
-@@ -130,15 +129,16 @@
+@@ -130,15 +130,17 @@
    void SendMessage(const std::string& json_object);
  
    int peer_id_;
@@ -369,6 +54,7 @@ Index: talk/examples/peerconnection/client/conductor.h
        active_streams_;
    std::string server_;
 +  std::string device_;
++  std::string client_name_;
  };
  
  #endif  // PEERCONNECTION_SAMPLES_CLIENT_CONDUCTOR_H_
@@ -456,7 +142,7 @@ Index: talk/examples/peerconnection/client/linux/main.cc
    FlagList::SetFlagsFromCommandLine(&argc, argv, true);
    if (FLAG_help) {
      FlagList::Print(NULL, false);
-@@ -82,30 +74,26 @@
+@@ -82,30 +74,27 @@
    // Abort if the user specifies a port that is outside the allowed
    // range [1, 65535].
    if ((FLAG_port < 1) || (FLAG_port > 65535)) {
@@ -479,7 +165,8 @@ Index: talk/examples/peerconnection/client/linux/main.cc
 -  talk_base::scoped_refptr<Conductor> conductor(
 -      new talk_base::RefCountedObject<Conductor>(&client, &wnd));
 +    talk_base::scoped_refptr<Conductor> conductor(
-+      new talk_base::RefCountedObject<Conductor>(&client, &remote_messages, FLAG_videodevice));
++      new talk_base::RefCountedObject<Conductor>(&client, &remote_messages, 
++         FLAG_videodevice, FLAG_clientname));
    socket_server.set_client(&client);
    socket_server.set_conductor(conductor);
  
@@ -1079,9 +766,11 @@ Index: talk/examples/peerconnection/client/flagdefs.h
 ===================================================================
 --- talk/examples/peerconnection/client/flagdefs.h	(revision 5193)
 +++ talk/examples/peerconnection/client/flagdefs.h	(working copy)
-@@ -41,6 +41,7 @@
+@@ -40,7 +40,9 @@
+ DEFINE_bool(help, false, "Prints this message");
  DEFINE_bool(autoconnect, false, "Connect to the server without user "
                                  "intervention.");
++DEFINE_string(clientname, "Unknown", "Name to report to server");
  DEFINE_string(server, "localhost", "The server to connect to.");
 +DEFINE_string(videodevice, "/dev/video0", "The video device to use.");
  DEFINE_int(port, kDefaultServerPort,
@@ -1278,6 +967,337 @@ Index: talk/examples/peerconnection/client/main_wnd.h
 -#endif  // WIN32
  
  #endif  // PEERCONNECTION_SAMPLES_CLIENT_MAIN_WND_H_
+Index: talk/examples/peerconnection/client/conductor.cc
+===================================================================
+--- talk/examples/peerconnection/client/conductor.cc	(revision 5193)
++++ talk/examples/peerconnection/client/conductor.cc	(working copy)
+@@ -64,12 +64,14 @@
+   ~DummySetSessionDescriptionObserver() {}
+ };
+ 
+-Conductor::Conductor(PeerConnectionClient* client, MainWindow* main_wnd)
++Conductor::Conductor(PeerConnectionClient* client, std::deque<std::string*>* remote_messages, 
++    const std::string& device, const std::string& client_name)
+   : peer_id_(-1),
+     client_(client),
+-    main_wnd_(main_wnd) {
++    remote_messages_(remote_messages),
++    device_(device),
++    client_name_(client_name) {
+   client_->RegisterObserver(this);
+-  main_wnd->RegisterObserver(this);
+ }
+ 
+ Conductor::~Conductor() {
+@@ -92,8 +94,7 @@
+   peer_connection_factory_  = webrtc::CreatePeerConnectionFactory();
+ 
+   if (!peer_connection_factory_.get()) {
+-    main_wnd_->MessageBox("Error",
+-        "Failed to initialize PeerConnectionFactory", true);
++    LOG(LS_ERROR) << "Failed to initialize PeerConnectionFactory";
+     DeletePeerConnection();
+     return false;
+   }
+@@ -107,8 +108,7 @@
+                                                                     NULL,
+                                                                     this);
+   if (!peer_connection_.get()) {
+-    main_wnd_->MessageBox("Error",
+-        "CreatePeerConnection failed", true);
++    LOG(LS_ERROR) << "CreatePeerConnection failed";
+     DeletePeerConnection();
+   }
+   AddStreams();
+@@ -118,18 +118,13 @@
+ void Conductor::DeletePeerConnection() {
+   peer_connection_ = NULL;
+   active_streams_.clear();
+-  main_wnd_->StopLocalRenderer();
+-  main_wnd_->StopRemoteRenderer();
+   peer_connection_factory_ = NULL;
+   peer_id_ = -1;
+ }
+ 
+ void Conductor::EnsureStreamingUI() {
+   ASSERT(peer_connection_.get() != NULL);
+-  if (main_wnd_->IsWindow()) {
+-    if (main_wnd_->current_ui() != MainWindow::STREAMING)
+-      main_wnd_->SwitchToStreamingUI();
+-  }
++  //TODO: This should be removed
+ }
+ 
+ //
+@@ -138,7 +133,6 @@
+ 
+ void Conductor::OnError() {
+   LOG(LS_ERROR) << __FUNCTION__;
+-  main_wnd_->QueueUIThreadCallback(PEER_CONNECTION_ERROR, NULL);
+ }
+ 
+ // Called when a remote stream is added
+@@ -146,15 +140,12 @@
+   LOG(INFO) << __FUNCTION__ << " " << stream->label();
+ 
+   stream->AddRef();
+-  main_wnd_->QueueUIThreadCallback(NEW_STREAM_ADDED,
+-                                   stream);
+ }
+ 
+ void Conductor::OnRemoveStream(webrtc::MediaStreamInterface* stream) {
+   LOG(INFO) << __FUNCTION__ << " " << stream->label();
+   stream->AddRef();
+-  main_wnd_->QueueUIThreadCallback(STREAM_REMOVED,
+-                                   stream);
++  stream->Release();
+ }
+ 
+ void Conductor::OnIceCandidate(const webrtc::IceCandidateInterface* candidate) {
+@@ -179,35 +170,33 @@
+ 
+ void Conductor::OnSignedIn() {
+   LOG(INFO) << __FUNCTION__;
+-  main_wnd_->SwitchToPeerList(client_->peers());
+ }
+ 
+ void Conductor::OnDisconnected() {
+   LOG(INFO) << __FUNCTION__;
+ 
+   DeletePeerConnection();
+-
+-  if (main_wnd_->IsWindow())
+-    main_wnd_->SwitchToConnectUI();
+ }
+ 
+ void Conductor::OnPeerConnected(int id, const std::string& name) {
+   LOG(INFO) << __FUNCTION__;
+-  // Refresh the list if we're showing it.
+-  if (main_wnd_->current_ui() == MainWindow::LIST_PEERS)
+-    main_wnd_->SwitchToPeerList(client_->peers());
++  LOG(INFO) << name << " connected";
++  if (name == "receiver")
++    ConnectToPeer(id);
+ }
+ 
+ void Conductor::OnPeerDisconnected(int id) {
+   LOG(INFO) << __FUNCTION__;
+   if (id == peer_id_) {
+     LOG(INFO) << "Our peer disconnected";
+-    main_wnd_->QueueUIThreadCallback(PEER_CONNECTION_CLOSED, NULL);
+-  } else {
+-    // Refresh the list if we're showing it.
+-    if (main_wnd_->current_ui() == MainWindow::LIST_PEERS)
+-      main_wnd_->SwitchToPeerList(client_->peers());
++   std::map<std::string, talk_base::scoped_refptr<webrtc::MediaStreamInterface> >::iterator 
++    stream_it = active_streams_.begin();
++  for (; stream_it != active_streams_.end(); ++stream_it) {
++   stream_it->second->Release();
+   }
++  active_streams_.clear();
++  DeletePeerConnection();
++  }
+ }
+ 
+ void Conductor::OnMessageFromPeer(int peer_id, const std::string& message) {
+@@ -215,6 +204,7 @@
+   ASSERT(!message.empty());
+ 
+   if (!peer_connection_.get()) {
++    LOG(INFO) << "Not currently connected to a peer ";
+     ASSERT(peer_id_ == -1);
+     peer_id_ = peer_id;
+ 
+@@ -229,11 +219,10 @@
+                     "conversation with a different peer.";
+     return;
+   }
+-
+   Json::Reader reader;
+   Json::Value jmessage;
+   if (!reader.parse(message, jmessage)) {
+-    LOG(WARNING) << "Received unknown message. " << message;
++    LOG(WARNING) << "Received unknown message " << message << " from peer " << peer_id;
+     return;
+   }
+   std::string type;
+@@ -274,11 +263,12 @@
+     talk_base::scoped_ptr<webrtc::IceCandidateInterface> candidate(
+         webrtc::CreateIceCandidate(sdp_mid, sdp_mlineindex, sdp));
+     if (!candidate.get()) {
+-      LOG(WARNING) << "Can't parse received candidate message.";
++      LOG(INFO) << "Can't parse received candidate message.";
+       return;
+     }
++    LOG(INFO) << peer_connection_.get();
+     if (!peer_connection_->AddIceCandidate(candidate.get())) {
+-      LOG(WARNING) << "Failed to apply the received candidate";
++      LOG(INFO) << "Failed to apply the received candidate";
+       return;
+     }
+     LOG(INFO) << " Received candidate :" << message;
+@@ -288,12 +278,11 @@
+ 
+ void Conductor::OnMessageSent(int err) {
+   // Process the next pending message if any.
+-  main_wnd_->QueueUIThreadCallback(SEND_MESSAGE_TO_PEER, NULL);
++    remote_messages_->push_back(NULL);
+ }
+ 
+ void Conductor::OnServerConnectionFailure() {
+-    main_wnd_->MessageBox("Error", ("Failed to connect to " + server_).c_str(),
+-                          true);
++    LOG(LS_ERROR) << ("Failed to connect to " + server_).c_str();
+ }
+ 
+ //
+@@ -304,7 +293,7 @@
+   if (client_->is_connected())
+     return;
+   server_ = server;
+-  client_->Connect(server, port, GetPeerName());
++  client_->Connect(server, port, client_name_);
+ }
+ 
+ void Conductor::DisconnectFromServer() {
+@@ -317,8 +306,7 @@
+   ASSERT(peer_id != -1);
+ 
+   if (peer_connection_.get()) {
+-    main_wnd_->MessageBox("Error",
+-        "We only support connecting to one peer at a time", true);
++    LOG(LS_ERROR) << "We only support connecting to one peer at a time";
+     return;
+   }
+ 
+@@ -326,7 +314,7 @@
+     peer_id_ = peer_id;
+     peer_connection_->CreateOffer(this, NULL);
+   } else {
+-    main_wnd_->MessageBox("Error", "Failed to initialize PeerConnection", true);
++    LOG(LS_ERROR) << "Failed to initialize PeerConnection";
+   }
+ }
+ 
+@@ -342,12 +330,16 @@
+     LOG(LS_ERROR) << "Can't enumerate video devices";
+     return NULL;
+   }
++  int32_t idx = 0;
+   std::vector<cricket::Device>::iterator dev_it = devs.begin();
+   cricket::VideoCapturer* capturer = NULL;
+   for (; dev_it != devs.end(); ++dev_it) {
+-    capturer = dev_manager->CreateVideoCapturer(*dev_it);
+-    if (capturer != NULL)
+-      break;
++    if (dev_it->id == device_) {
++      capturer = dev_manager->CreateVideoCapturer(*dev_it, idx);
++      if (capturer != NULL)
++        break;
++    }
++    idx++;
+   }
+   return capturer;
+ }
+@@ -356,21 +348,15 @@
+   if (active_streams_.find(kStreamLabel) != active_streams_.end())
+     return;  // Already added.
+ 
+-  talk_base::scoped_refptr<webrtc::AudioTrackInterface> audio_track(
+-      peer_connection_factory_->CreateAudioTrack(
+-          kAudioLabel, peer_connection_factory_->CreateAudioSource(NULL)));
+-
+   talk_base::scoped_refptr<webrtc::VideoTrackInterface> video_track(
+       peer_connection_factory_->CreateVideoTrack(
+           kVideoLabel,
+           peer_connection_factory_->CreateVideoSource(OpenVideoCaptureDevice(),
+                                                       NULL)));
+-  main_wnd_->StartLocalRenderer(video_track);
+ 
+   talk_base::scoped_refptr<webrtc::MediaStreamInterface> stream =
+       peer_connection_factory_->CreateLocalMediaStream(kStreamLabel);
+ 
+-  stream->AddTrack(audio_track);
+   stream->AddTrack(video_track);
+   if (!peer_connection_->AddStream(stream, NULL)) {
+     LOG(LS_ERROR) << "Adding stream to PeerConnection failed";
+@@ -379,18 +365,15 @@
+                     talk_base::scoped_refptr<webrtc::MediaStreamInterface> >
+       MediaStreamPair;
+   active_streams_.insert(MediaStreamPair(stream->label(), stream));
+-  main_wnd_->SwitchToStreamingUI();
+ }
+ 
+ void Conductor::DisconnectFromCurrentPeer() {
+   LOG(INFO) << __FUNCTION__;
+   if (peer_connection_.get()) {
+     client_->SendHangUp(peer_id_);
+-    DeletePeerConnection();
++    
+   }
+-
+-  if (main_wnd_->IsWindow())
+-    main_wnd_->SwitchToPeerList(client_->peers());
++  DeletePeerConnection();
+ }
+ 
+ void Conductor::UIThreadCallback(int msg_id, void* data) {
+@@ -401,15 +384,6 @@
+ 
+       ASSERT(active_streams_.empty());
+ 
+-      if (main_wnd_->IsWindow()) {
+-        if (client_->is_connected()) {
+-          main_wnd_->SwitchToPeerList(client_->peers());
+-        } else {
+-          main_wnd_->SwitchToConnectUI();
+-        }
+-      } else {
+-        DisconnectFromServer();
+-      }
+       break;
+ 
+     case SEND_MESSAGE_TO_PEER: {
+@@ -440,29 +414,14 @@
+     }
+ 
+     case PEER_CONNECTION_ERROR:
+-      main_wnd_->MessageBox("Error", "an unknown error occurred", true);
+       break;
+ 
++    // Doesn't recieve streams
+     case NEW_STREAM_ADDED: {
+-      webrtc::MediaStreamInterface* stream =
+-          reinterpret_cast<webrtc::MediaStreamInterface*>(
+-          data);
+-      webrtc::VideoTrackVector tracks = stream->GetVideoTracks();
+-      // Only render the first track.
+-      if (!tracks.empty()) {
+-        webrtc::VideoTrackInterface* track = tracks[0];
+-        main_wnd_->StartRemoteRenderer(track);
+-      }
+-      stream->Release();
+       break;
+     }
+ 
+     case STREAM_REMOVED: {
+-      // Remote peer stopped sending a stream.
+-      webrtc::MediaStreamInterface* stream =
+-          reinterpret_cast<webrtc::MediaStreamInterface*>(
+-          data);
+-      stream->Release();
+       break;
+     }
+ 
+@@ -490,5 +449,7 @@
+ 
+ void Conductor::SendMessage(const std::string& json_object) {
+   std::string* msg = new std::string(json_object);
+-  main_wnd_->QueueUIThreadCallback(SEND_MESSAGE_TO_PEER, msg);
++  LOG(INFO) << __FUNCTION__;
++  //UIThreadCallback(SEND_MESSAGE_TO_PEER, msg);
++  remote_messages_->push_back(msg);
+ }
 Index: talk/examples/peerconnection/peerconnection.scons
 ===================================================================
 --- talk/examples/peerconnection/peerconnection.scons	(revision 5193)
@@ -1298,11 +1318,115 @@ Index: talk/examples/peerconnection/peerconnection.scons
      lin_libs = [
        'sound',
      ],
+Index: talk/media/devices/devicemanager.cc
+===================================================================
+--- talk/media/devices/devicemanager.cc	(revision 5193)
++++ talk/media/devices/devicemanager.cc	(working copy)
+@@ -74,9 +74,13 @@
+   virtual ~DefaultVideoCapturerFactory() {}
+ 
+   VideoCapturer* Create(const Device& device) {
++    return Create(device, -1);
++  }
++
++  VideoCapturer* Create(const Device& device, int32_t idx) {
+ #if defined(VIDEO_CAPTURER_NAME)
+     VIDEO_CAPTURER_NAME* return_value = new VIDEO_CAPTURER_NAME;
+-    if (!return_value->Init(device)) {
++    if (!return_value->Init(device, idx)) {
+       delete return_value;
+       return NULL;
+     }
+@@ -201,6 +205,10 @@
+ }
+ 
+ VideoCapturer* DeviceManager::CreateVideoCapturer(const Device& device) const {
++  return CreateVideoCapturer(device, -1);
++}
++
++VideoCapturer* DeviceManager::CreateVideoCapturer(const Device& device, int32_t idx) const {
+ #if defined(IOS)
+   LOG_F(LS_ERROR) << " should never be called!";
+   return NULL;
+@@ -217,7 +225,7 @@
+     capturer->set_repeat(talk_base::kForever);
+     return capturer;
+   }
+-  VideoCapturer* capturer = device_video_capturer_factory_->Create(device);
++  VideoCapturer* capturer = device_video_capturer_factory_->Create(device, idx);
+   if (!capturer) {
+     return NULL;
+   }
+Index: talk/media/devices/devicemanager.h
+===================================================================
+--- talk/media/devices/devicemanager.h	(revision 5193)
++++ talk/media/devices/devicemanager.h	(working copy)
+@@ -69,6 +69,7 @@
+   virtual ~VideoCapturerFactory() {}
+ 
+   virtual VideoCapturer* Create(const Device& device) = 0;
++  virtual VideoCapturer* Create(const Device& device, int32_t idx) = 0;
+ };
+ 
+ // DeviceManagerInterface - interface to manage the audio and
+@@ -106,6 +107,7 @@
+ 
+   // Device creation
+   virtual VideoCapturer* CreateVideoCapturer(const Device& device) const = 0;
++  virtual VideoCapturer* CreateVideoCapturer(const Device& device, int32_t idx) const = 0;
+ 
+   virtual bool GetWindows(
+       std::vector<talk_base::WindowDescription>* descriptions) = 0;
+@@ -168,6 +170,7 @@
+                                               const VideoFormat& max_format);
+   virtual void ClearVideoCaptureDeviceMaxFormat(const std::string& usb_id);
+ 
++  virtual VideoCapturer* CreateVideoCapturer(const Device& device, int32_t idx) const;
+   virtual VideoCapturer* CreateVideoCapturer(const Device& device) const;
+ 
+   virtual bool GetWindows(
+Index: talk/media/devices/fakedevicemanager.h
+===================================================================
+--- talk/media/devices/fakedevicemanager.h	(revision 5193)
++++ talk/media/devices/fakedevicemanager.h	(working copy)
+@@ -97,6 +97,9 @@
+   virtual VideoCapturer* CreateVideoCapturer(const Device& device) const {
+     return new FakeVideoCapturer();
+   }
++  virtual VideoCapturer* CreateVideoCapturer(const Device& device, int32_t idx) const {
++    return new FakeVideoCapturer();
++  }
+   virtual bool GetWindows(
+       std::vector<talk_base::WindowDescription>* descriptions) {
+     descriptions->clear();
+Index: talk/media/webrtc/webrtcvideocapturer.h
+===================================================================
+--- talk/media/webrtc/webrtcvideocapturer.h	(revision 5193)
++++ talk/media/webrtc/webrtcvideocapturer.h	(working copy)
+@@ -60,6 +60,7 @@
+   virtual ~WebRtcVideoCapturer();
+ 
+   bool Init(const Device& device);
++  bool Init(const Device& device, int32_t idx);
+   bool Init(webrtc::VideoCaptureModule* module);
+ 
+   // Override virtual methods of the parent class VideoCapturer.
 Index: talk/media/webrtc/webrtcvideocapturer.cc
 ===================================================================
 --- talk/media/webrtc/webrtcvideocapturer.cc	(revision 5193)
 +++ talk/media/webrtc/webrtcvideocapturer.cc	(working copy)
-@@ -153,23 +153,27 @@
+@@ -140,6 +140,10 @@
+ }
+ 
+ bool WebRtcVideoCapturer::Init(const Device& device) {
++  return Init(device, -1);
++}
++
++bool WebRtcVideoCapturer::Init(const Device& device, int32_t idx) {
+   if (module_) {
+     LOG(LS_ERROR) << "The capturer is already initialized";
+     return false;
+@@ -153,19 +157,27 @@
    // Find the desired camera, by name.
    // In the future, comparing IDs will be more robust.
    // TODO(juberti): Figure what's needed to allow this.
@@ -1313,11 +1437,15 @@ Index: talk/media/webrtc/webrtcvideocapturer.cc
    bool found = false;
    for (int index = 0; index < num_cams; ++index) {
      char vcm_name[256];
++   
++    LOG(LS_INFO) << "Checking camers " << device.name << " " << device.id;
      if (info->GetDeviceName(index, vcm_name, ARRAY_SIZE(vcm_name),
                              vcm_id, ARRAY_SIZE(vcm_id)) != -1) {
 -      if (device.name == reinterpret_cast<char*>(vcm_name)) {
++    LOG(LS_INFO) << "Checking cameras " << reinterpret_cast<char*>(vcm_name) << " " << reinterpret_cast<char*>(vcm_id);
++
 +      if (device.name == reinterpret_cast<char*>(vcm_name) ||
-+          device.id == reinterpret_cast<char*>(vcm_id)) {
++          device.id == reinterpret_cast<char*>(vcm_id) || index == idx) {
          found = true;
          break;
        }
@@ -1326,13 +1454,7 @@ Index: talk/media/webrtc/webrtcvideocapturer.cc
 +  
    if (!found) {
      LOG(LS_WARNING) << "Failed to find capturer for id: " << device.id;
--    factory_->DestroyDeviceInfo(info);
--    return false;
-+    //factory_->DestroyDeviceInfo(info);
-+    //return false;
-   }
- 
-   // Enumerate the supported formats.
+     factory_->DestroyDeviceInfo(info);
 Index: talk/app/webrtc/videosource.cc
 ===================================================================
 --- talk/app/webrtc/videosource.cc	(revision 5193)
