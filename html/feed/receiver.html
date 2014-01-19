@@ -2,6 +2,10 @@
 <head>
 <title>ocupus camera feed receiver</title>
 <!-- from server_test.html -->
+<style>
+body {font-family: helvetica, sans-serif, arial}
+fieldset {display: inline-block}
+</style>
 <script src="js/jquery-2.0.3.min.js"></script>
 <script src="js/adapter.js"></script>
 <script>
@@ -23,18 +27,7 @@ function handleServerNotification(data) {
     other_peers[parseInt(parsed[1])] = parsed[0];
 }
 
-var localPeerConnection;
-
-function myAnswer(description) {
-  localPeerConnection.setLocalDescription(description);
-  description.sdp = setBitRate(description.sdp, 512);
-  sendToPeer(lastPeerId, JSON.stringify(description));
-}
-
-function gotRemoteStream(e){
-  attachMediaStream(vid2, e.stream);
-}
-
+var localConnections = {};
 
 var haveOffer = false;
 var didIt = false;
@@ -42,13 +35,7 @@ var didIt = false;
 var remoteConn;
 var lastPeerId;
 
-function iceCallback2(icb) {
 
-  if (icb.candidate && isGoodCandidate(JSON.stringify(icb.candidate))) {
-    var myIcb = JSON.stringify(icb.candidate);
-    setTimeout(50,sendToPeer(lastPeerId, JSON.stringify(icb.candidate)));
-  }
-}
 
 function setBitRate(sdp, videoBitRate)
  {
@@ -61,8 +48,26 @@ function setBitRate(sdp, videoBitRate)
  }
 
 function isGoodCandidate(conn) {
-  return true; // For now allow all network candidates through
-  return conn.search("172.17") != -1;
+  if ($("#dofilter").checked) {
+    return conn.search("172.17") != -1;
+  }
+  return true;
+}
+
+// From http://stackoverflow.com/questions/4197591/parsing-url-hash-fragment-identifier-with-javascript
+function getHashParams() {
+
+    var hashParams = {};
+    var e,
+        a = /\+/g,  // Regex for replacing addition symbol with a space
+        r = /([^&;=]+)=?([^&;]*)/g,
+        d = function (s) { return decodeURIComponent(s.replace(a, " ")); },
+        q = window.location.hash.substring(1);
+
+    while (e = r.exec(q))
+       hashParams[d(e[1])] = d(e[2]);
+
+    return hashParams;
 }
 
 function handlePeerMessage(peer_id, data) {
@@ -74,14 +79,29 @@ function handlePeerMessage(peer_id, data) {
       var servers = null;
       haveOffer = true;
 
-      localPeerConnection = new RTCPeerConnection(servers);
+      var localPeerConnection = new RTCPeerConnection(servers);
 
       localPeerConnection.setRemoteDescription(new RTCSessionDescription(offerInfo));
 
-      localPeerConnection.createAnswer(myAnswer, null, sdpConstraints);
-      localPeerConnection.onicecandidate = iceCallback2;
+      localPeerConnection.createAnswer(function (description) {
+        localPeerConnection.setLocalDescription(description);
+        description.sdp = setBitRate(description.sdp, 512);
+        sendToPeer(peer_id, JSON.stringify(description));
+      }, null, sdpConstraints);
+      localPeerConnection.onicecandidate = function (icb) {
 
-      localPeerConnection.onaddstream = gotRemoteStream;
+        if (icb.candidate && isGoodCandidate(JSON.stringify(icb.candidate))) {
+          setTimeout(50,sendToPeer(peer_id, JSON.stringify(icb.candidate)));
+        }
+};
+
+      localPeerConnection.onaddstream = function gotRemoteStream(e){
+        var vidid = "vid" + peer_id;
+        $("#remoteviews").append("<fieldset><legend>" + other_peers[peer_id] + "</legend><video id='" + vidid + "' autoplay></video></fieldset>");
+        attachMediaStream($("#" + vidid).get(0), e.stream);
+      };
+
+      localConnections[peer_id] = localPeerConnection;
 
     }  
 
@@ -89,7 +109,7 @@ function handlePeerMessage(peer_id, data) {
       var candidateInfo = JSON.parse(data);
       var cand = new RTCIceCandidate(candidateInfo);
 
-      localPeerConnection.addIceCandidate(new RTCIceCandidate(candidateInfo));
+      localConnections[peer_id].addIceCandidate(new RTCIceCandidate(candidateInfo));
 
       didIt = true;
     } 
@@ -266,12 +286,31 @@ Server: <input type="text" id="server" value="http://172.17.0.1:8888" /><br>
 Your name: <input type="text" id="local" value="receiver"/>
 <button id="connect" onclick="connect();">Connect</button>
 <button disabled="true" id="disconnect"
-        onclick="disconnect();">Disconnect</button>
+        onclick="disconnect();">Disconnect</button><br>
+<input id="dofilter" type="checkbox" name="dofilter" value="dofilter">Restrict candidates to 172.17. for OpenVPN</input>
 <br>
 
 <pre id="debug">
 </pre>
 <br><hr>
-<video id="vid2" autoplay></video>
+<div id="remoteviews"></div>
 </body>
+<script>
+$(document).ready(function() {
+  var hashConf = getHashParams();
+  if (typeof(hashConf['server']) !== 'undefined') {
+    $("#server").attr("value",hashConf['server']);
+  }
+
+  if (typeof(hashConf['restrict']) !== 'undefined' && hashConf['restrict'] == "y") {
+    $("#dofilter").prop('checked', true);
+  }
+
+  if (typeof(hashConf['auto']) !== 'undefined' && hashConf['auto'] == "y") {
+    connect();
+  }
+
+  
+});
+</script>
 </html>
