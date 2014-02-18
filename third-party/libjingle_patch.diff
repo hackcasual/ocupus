@@ -1,80 +1,53 @@
-Index: talk/examples/peerconnection/client/conductor.h
+Index: webrtc/modules/video_capture/linux/device_info_linux.cc
 ===================================================================
---- talk/examples/peerconnection/client/conductor.h	(revision 5193)
-+++ talk/examples/peerconnection/client/conductor.h	(working copy)
-@@ -34,8 +34,8 @@
- #include <set>
- #include <string>
+--- webrtc/modules/video_capture/linux/device_info_linux.cc	(revision 5193)
++++ webrtc/modules/video_capture/linux/device_info_linux.cc	(working copy)
+@@ -64,7 +64,9 @@
+     int fd = -1;
  
-+#include "talk/examples/peerconnection/client/peer_connection_client.h"
- #include "talk/examples/peerconnection/client/main_wnd.h"
--#include "talk/examples/peerconnection/client/peer_connection_client.h"
- #include "talk/app/webrtc/mediastreaminterface.h"
- #include "talk/app/webrtc/peerconnectioninterface.h"
- #include "talk/base/scoped_ptr.h"
-@@ -51,8 +51,7 @@
- class Conductor
-   : public webrtc::PeerConnectionObserver,
-     public webrtc::CreateSessionDescriptionObserver,
--    public PeerConnectionClientObserver,
--    public MainWndCallback {
-+    public PeerConnectionClientObserver {
-  public:
-   enum CallbackID {
-     MEDIA_CHANNELS_INITIALIZED = 1,
-@@ -63,13 +62,14 @@
-     STREAM_REMOVED,
-   };
- 
--  Conductor(PeerConnectionClient* client, MainWindow* main_wnd);
-+  Conductor(PeerConnectionClient* client, std::deque<std::string*>* remote_messages, 
-+    const std::string& device, const std::string& client_name);
- 
-   bool connection_active() const;
- 
-   virtual void Close();
- 
-- protected:
-+
-   ~Conductor();
-   bool InitializePeerConnection();
-   void DeletePeerConnection();
-@@ -130,15 +130,17 @@
-   void SendMessage(const std::string& json_object);
- 
-   int peer_id_;
-+  std::deque<std::string*>* remote_messages_;
-   talk_base::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
-   talk_base::scoped_refptr<webrtc::PeerConnectionFactoryInterface>
-       peer_connection_factory_;
-   PeerConnectionClient* client_;
--  MainWindow* main_wnd_;
-   std::deque<std::string*> pending_messages_;
-   std::map<std::string, talk_base::scoped_refptr<webrtc::MediaStreamInterface> >
-       active_streams_;
-   std::string server_;
-+  std::string device_;
-+  std::string client_name_;
- };
- 
- #endif  // PEERCONNECTION_SAMPLES_CLIENT_CONDUCTOR_H_
-Index: talk/examples/peerconnection/client/peer_connection_client.cc
+     /* detect /dev/video [0-63]VideoCaptureModule entries */
+-    for (int n = 0; n < 64; n++)
++    /* BUG: cvaughn@gmail.com - On the odroidxu this seems to 
++       hang quite a bit past 40 or so devices*/
++    for (int n = 0; n < 32; n++)
+     {
+         sprintf(device, "/dev/video%d", n);
+         if ((fd = open(device, O_RDONLY)) != -1)
+Index: talk/libjingle_examples.gyp
 ===================================================================
---- talk/examples/peerconnection/client/peer_connection_client.cc	(revision 5193)
-+++ talk/examples/peerconnection/client/peer_connection_client.cc	(working copy)
-@@ -271,6 +271,7 @@
- 
- void PeerConnectionClient::OnMessageFromPeer(int peer_id,
-                                              const std::string& message) {
-+  LOG(INFO) << "STWD :: PCC OMFP";
-   if (message.length() == (sizeof(kByeMessage) - 1) &&
-       message.compare(kByeMessage) == 0) {
-     callback_->OnPeerDisconnected(peer_id);
+--- talk/libjingle_examples.gyp	(revision 5193)
++++ talk/libjingle_examples.gyp	(working copy)
+@@ -191,9 +191,9 @@
+             }],  # OS=="win"
+             ['OS=="linux"', {
+               'sources': [
+-                'examples/peerconnection/client/linux/main.cc',
+-                'examples/peerconnection/client/linux/main_wnd.cc',
+-                'examples/peerconnection/client/linux/main_wnd.h',
++                'examples/peerconnection/client/linux/main.cc'
++                'examples/peerconnection/client/main_wnd.cc',
++                'examples/peerconnection/client/main_wnd.h',
+               ],
+               'cflags': [
+                 '<!@(pkg-config --cflags glib-2.0 gobject-2.0 gtk+-2.0)',
+Index: talk/libjingle.gyp
+===================================================================
+--- talk/libjingle.gyp	(revision 5193)
++++ talk/libjingle.gyp	(working copy)
+@@ -33,7 +33,7 @@
+      'conditions': [
+        ['sysroot!=""', {
+          'variables': {
+-           'pkg-config': '../../../build/linux/pkg-config-wrapper "<(sysroot)" "<(target_arch)"',
++           'pkg-config': '/home/charles/libjingle/trunk/build/linux/pkg-config-wrapper "<(sysroot)" "<(target_arch)"',
+          },
+        }, {
+          'variables': {
 Index: talk/examples/peerconnection/client/linux/main.cc
 ===================================================================
 --- talk/examples/peerconnection/client/linux/main.cc	(revision 5193)
 +++ talk/examples/peerconnection/client/linux/main.cc	(working copy)
-@@ -25,19 +25,21 @@
+@@ -25,19 +25,22 @@
   * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   */
  
@@ -88,6 +61,7 @@ Index: talk/examples/peerconnection/client/linux/main.cc
  
  #include "talk/base/thread.h"
  
++#include <unistd.h>
 +#include <string>
 +
 +std::deque<std::string*> remote_messages;
@@ -101,7 +75,7 @@ Index: talk/examples/peerconnection/client/linux/main.cc
    virtual ~CustomSocketServer() {}
  
    void set_client(PeerConnectionClient* client) { client_ = client; }
-@@ -45,34 +47,24 @@
+@@ -45,34 +48,26 @@
  
    // Override so that we can also pump the GTK message loop.
    virtual bool Wait(int cms, bool process_io) {
@@ -123,6 +97,8 @@ Index: talk/examples/peerconnection/client/linux/main.cc
 +	conductor_->UIThreadCallback(Conductor::SEND_MESSAGE_TO_PEER, msg);
 +      }
 +
++    usleep(1000);
++
      return talk_base::PhysicalSocketServer::Wait(0/*cms == -1 ? 1 : cms*/,
                                                   process_io);
    }
@@ -142,7 +118,7 @@ Index: talk/examples/peerconnection/client/linux/main.cc
    FlagList::SetFlagsFromCommandLine(&argc, argv, true);
    if (FLAG_help) {
      FlagList::Print(NULL, false);
-@@ -82,30 +74,27 @@
+@@ -82,30 +77,27 @@
    // Abort if the user specifies a port that is outside the allowed
    // range [1, 65535].
    if ((FLAG_port < 1) || (FLAG_port > 65535)) {
@@ -1179,10 +1155,11 @@ Index: talk/examples/peerconnection/client/conductor.cc
    }
  }
  
-@@ -342,12 +330,16 @@
+@@ -342,12 +330,17 @@
      LOG(LS_ERROR) << "Can't enumerate video devices";
      return NULL;
    }
++
 +  int32_t idx = 0;
    std::vector<cricket::Device>::iterator dev_it = devs.begin();
    cricket::VideoCapturer* capturer = NULL;
@@ -1199,7 +1176,7 @@ Index: talk/examples/peerconnection/client/conductor.cc
    }
    return capturer;
  }
-@@ -356,21 +348,15 @@
+@@ -356,21 +349,15 @@
    if (active_streams_.find(kStreamLabel) != active_streams_.end())
      return;  // Already added.
  
@@ -1221,7 +1198,7 @@ Index: talk/examples/peerconnection/client/conductor.cc
    stream->AddTrack(video_track);
    if (!peer_connection_->AddStream(stream, NULL)) {
      LOG(LS_ERROR) << "Adding stream to PeerConnection failed";
-@@ -379,18 +365,15 @@
+@@ -379,18 +366,15 @@
                      talk_base::scoped_refptr<webrtc::MediaStreamInterface> >
        MediaStreamPair;
    active_streams_.insert(MediaStreamPair(stream->label(), stream));
@@ -1242,7 +1219,7 @@ Index: talk/examples/peerconnection/client/conductor.cc
  }
  
  void Conductor::UIThreadCallback(int msg_id, void* data) {
-@@ -401,15 +384,6 @@
+@@ -401,15 +385,6 @@
  
        ASSERT(active_streams_.empty());
  
@@ -1258,7 +1235,7 @@ Index: talk/examples/peerconnection/client/conductor.cc
        break;
  
      case SEND_MESSAGE_TO_PEER: {
-@@ -440,29 +414,14 @@
+@@ -440,29 +415,14 @@
      }
  
      case PEER_CONNECTION_ERROR:
@@ -1289,7 +1266,7 @@ Index: talk/examples/peerconnection/client/conductor.cc
        break;
      }
  
-@@ -490,5 +449,7 @@
+@@ -490,5 +450,7 @@
  
  void Conductor::SendMessage(const std::string& json_object) {
    std::string* msg = new std::string(json_object);
@@ -1298,6 +1275,66 @@ Index: talk/examples/peerconnection/client/conductor.cc
 +  //UIThreadCallback(SEND_MESSAGE_TO_PEER, msg);
 +  remote_messages_->push_back(msg);
  }
+Index: talk/examples/peerconnection/client/conductor.h
+===================================================================
+--- talk/examples/peerconnection/client/conductor.h	(revision 5193)
++++ talk/examples/peerconnection/client/conductor.h	(working copy)
+@@ -34,8 +34,8 @@
+ #include <set>
+ #include <string>
+ 
++#include "talk/examples/peerconnection/client/peer_connection_client.h"
+ #include "talk/examples/peerconnection/client/main_wnd.h"
+-#include "talk/examples/peerconnection/client/peer_connection_client.h"
+ #include "talk/app/webrtc/mediastreaminterface.h"
+ #include "talk/app/webrtc/peerconnectioninterface.h"
+ #include "talk/base/scoped_ptr.h"
+@@ -51,8 +51,7 @@
+ class Conductor
+   : public webrtc::PeerConnectionObserver,
+     public webrtc::CreateSessionDescriptionObserver,
+-    public PeerConnectionClientObserver,
+-    public MainWndCallback {
++    public PeerConnectionClientObserver {
+  public:
+   enum CallbackID {
+     MEDIA_CHANNELS_INITIALIZED = 1,
+@@ -63,13 +62,14 @@
+     STREAM_REMOVED,
+   };
+ 
+-  Conductor(PeerConnectionClient* client, MainWindow* main_wnd);
++  Conductor(PeerConnectionClient* client, std::deque<std::string*>* remote_messages, 
++    const std::string& device, const std::string& client_name);
+ 
+   bool connection_active() const;
+ 
+   virtual void Close();
+ 
+- protected:
++
+   ~Conductor();
+   bool InitializePeerConnection();
+   void DeletePeerConnection();
+@@ -130,15 +130,17 @@
+   void SendMessage(const std::string& json_object);
+ 
+   int peer_id_;
++  std::deque<std::string*>* remote_messages_;
+   talk_base::scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
+   talk_base::scoped_refptr<webrtc::PeerConnectionFactoryInterface>
+       peer_connection_factory_;
+   PeerConnectionClient* client_;
+-  MainWindow* main_wnd_;
+   std::deque<std::string*> pending_messages_;
+   std::map<std::string, talk_base::scoped_refptr<webrtc::MediaStreamInterface> >
+       active_streams_;
+   std::string server_;
++  std::string device_;
++  std::string client_name_;
+ };
+ 
+ #endif  // PEERCONNECTION_SAMPLES_CLIENT_CONDUCTOR_H_
 Index: talk/examples/peerconnection/peerconnection.scons
 ===================================================================
 --- talk/examples/peerconnection/peerconnection.scons	(revision 5193)
@@ -1318,6 +1355,141 @@ Index: talk/examples/peerconnection/peerconnection.scons
      lin_libs = [
        'sound',
      ],
+Index: talk/media/webrtc/webrtcvideocapturer.cc
+===================================================================
+--- talk/media/webrtc/webrtcvideocapturer.cc	(revision 5193)
++++ talk/media/webrtc/webrtcvideocapturer.cc	(working copy)
+@@ -140,6 +140,10 @@
+ }
+ 
+ bool WebRtcVideoCapturer::Init(const Device& device) {
++  return Init(device, -1);
++}
++
++bool WebRtcVideoCapturer::Init(const Device& device, int32_t idx) {
+   if (module_) {
+     LOG(LS_ERROR) << "The capturer is already initialized";
+     return false;
+@@ -153,19 +157,27 @@
+   // Find the desired camera, by name.
+   // In the future, comparing IDs will be more robust.
+   // TODO(juberti): Figure what's needed to allow this.
++ 
+   int num_cams = info->NumberOfDevices();
+   char vcm_id[256] = "";
++  // There's an issue, particularly with the PS3 eye camera where this check doesn't work
+   bool found = false;
+   for (int index = 0; index < num_cams; ++index) {
+     char vcm_name[256];
++   
++    LOG(LS_INFO) << "Checking cameras " << device.name << " " << device.id;
+     if (info->GetDeviceName(index, vcm_name, ARRAY_SIZE(vcm_name),
+                             vcm_id, ARRAY_SIZE(vcm_id)) != -1) {
+-      if (device.name == reinterpret_cast<char*>(vcm_name)) {
++    LOG(LS_INFO) << "Checking cameras " << reinterpret_cast<char*>(vcm_name) << " " << reinterpret_cast<char*>(vcm_id);
++
++      if (device.name == reinterpret_cast<char*>(vcm_name) ||
++          device.id == reinterpret_cast<char*>(vcm_id) || index == idx) {
+         found = true;
+         break;
+       }
+     }
+   }
++  
+   if (!found) {
+     LOG(LS_WARNING) << "Failed to find capturer for id: " << device.id;
+     factory_->DestroyDeviceInfo(info);
+Index: talk/media/webrtc/webrtcvideocapturer.h
+===================================================================
+--- talk/media/webrtc/webrtcvideocapturer.h	(revision 5193)
++++ talk/media/webrtc/webrtcvideocapturer.h	(working copy)
+@@ -60,6 +60,7 @@
+   virtual ~WebRtcVideoCapturer();
+ 
+   bool Init(const Device& device);
++  bool Init(const Device& device, int32_t idx);
+   bool Init(webrtc::VideoCaptureModule* module);
+ 
+   // Override virtual methods of the parent class VideoCapturer.
+Index: talk/media/devices/devicemanager.h
+===================================================================
+--- talk/media/devices/devicemanager.h	(revision 5193)
++++ talk/media/devices/devicemanager.h	(working copy)
+@@ -69,6 +69,7 @@
+   virtual ~VideoCapturerFactory() {}
+ 
+   virtual VideoCapturer* Create(const Device& device) = 0;
++  virtual VideoCapturer* Create(const Device& device, int32_t idx) = 0;
+ };
+ 
+ // DeviceManagerInterface - interface to manage the audio and
+@@ -106,6 +107,7 @@
+ 
+   // Device creation
+   virtual VideoCapturer* CreateVideoCapturer(const Device& device) const = 0;
++  virtual VideoCapturer* CreateVideoCapturer(const Device& device, int32_t idx) const = 0;
+ 
+   virtual bool GetWindows(
+       std::vector<talk_base::WindowDescription>* descriptions) = 0;
+@@ -168,6 +170,7 @@
+                                               const VideoFormat& max_format);
+   virtual void ClearVideoCaptureDeviceMaxFormat(const std::string& usb_id);
+ 
++  virtual VideoCapturer* CreateVideoCapturer(const Device& device, int32_t idx) const;
+   virtual VideoCapturer* CreateVideoCapturer(const Device& device) const;
+ 
+   virtual bool GetWindows(
+Index: talk/media/devices/linuxdevicemanager.cc
+===================================================================
+--- talk/media/devices/linuxdevicemanager.cc	(revision 5193)
++++ talk/media/devices/linuxdevicemanager.cc	(working copy)
+@@ -239,8 +239,6 @@
+ }
+ 
+ static void ScanV4L2Devices(std::vector<Device>* devices) {
+-  LOG(LS_INFO) << ("Enumerating V4L2 devices");
+-
+   MetaType meta;
+   std::string metadata_dir;
+ 
+@@ -258,10 +256,12 @@
+     meta = NONE;
+   }
+ 
++  // For some reason this seems to hang after about 40 devices
++  uint32_t cnt = 0;
++
+   if (meta != NONE) {
+-    LOG(LS_INFO) << "V4L2 device metadata found at " << metadata_dir;
+-
+     do {
++      cnt++;
+       std::string filename = directoryIterator->Name();
+ 
+       if (filename.find("video") == 0) {
+@@ -272,7 +272,7 @@
+               Device(GetVideoDeviceName(meta, filename), device_path));
+         }
+       }
+-    } while (directoryIterator->Next());
++    } while (cnt < 40 && directoryIterator->Next());
+   } else {
+     LOG(LS_ERROR) << "Unable to detect v4l2 metadata directory";
+   }
+Index: talk/media/devices/fakedevicemanager.h
+===================================================================
+--- talk/media/devices/fakedevicemanager.h	(revision 5193)
++++ talk/media/devices/fakedevicemanager.h	(working copy)
+@@ -97,6 +97,9 @@
+   virtual VideoCapturer* CreateVideoCapturer(const Device& device) const {
+     return new FakeVideoCapturer();
+   }
++  virtual VideoCapturer* CreateVideoCapturer(const Device& device, int32_t idx) const {
++    return new FakeVideoCapturer();
++  }
+   virtual bool GetWindows(
+       std::vector<talk_base::WindowDescription>* descriptions) {
+     descriptions->clear();
 Index: talk/media/devices/devicemanager.cc
 ===================================================================
 --- talk/media/devices/devicemanager.cc	(revision 5193)
@@ -1357,104 +1529,6 @@ Index: talk/media/devices/devicemanager.cc
    if (!capturer) {
      return NULL;
    }
-Index: talk/media/devices/devicemanager.h
-===================================================================
---- talk/media/devices/devicemanager.h	(revision 5193)
-+++ talk/media/devices/devicemanager.h	(working copy)
-@@ -69,6 +69,7 @@
-   virtual ~VideoCapturerFactory() {}
- 
-   virtual VideoCapturer* Create(const Device& device) = 0;
-+  virtual VideoCapturer* Create(const Device& device, int32_t idx) = 0;
- };
- 
- // DeviceManagerInterface - interface to manage the audio and
-@@ -106,6 +107,7 @@
- 
-   // Device creation
-   virtual VideoCapturer* CreateVideoCapturer(const Device& device) const = 0;
-+  virtual VideoCapturer* CreateVideoCapturer(const Device& device, int32_t idx) const = 0;
- 
-   virtual bool GetWindows(
-       std::vector<talk_base::WindowDescription>* descriptions) = 0;
-@@ -168,6 +170,7 @@
-                                               const VideoFormat& max_format);
-   virtual void ClearVideoCaptureDeviceMaxFormat(const std::string& usb_id);
- 
-+  virtual VideoCapturer* CreateVideoCapturer(const Device& device, int32_t idx) const;
-   virtual VideoCapturer* CreateVideoCapturer(const Device& device) const;
- 
-   virtual bool GetWindows(
-Index: talk/media/devices/fakedevicemanager.h
-===================================================================
---- talk/media/devices/fakedevicemanager.h	(revision 5193)
-+++ talk/media/devices/fakedevicemanager.h	(working copy)
-@@ -97,6 +97,9 @@
-   virtual VideoCapturer* CreateVideoCapturer(const Device& device) const {
-     return new FakeVideoCapturer();
-   }
-+  virtual VideoCapturer* CreateVideoCapturer(const Device& device, int32_t idx) const {
-+    return new FakeVideoCapturer();
-+  }
-   virtual bool GetWindows(
-       std::vector<talk_base::WindowDescription>* descriptions) {
-     descriptions->clear();
-Index: talk/media/webrtc/webrtcvideocapturer.h
-===================================================================
---- talk/media/webrtc/webrtcvideocapturer.h	(revision 5193)
-+++ talk/media/webrtc/webrtcvideocapturer.h	(working copy)
-@@ -60,6 +60,7 @@
-   virtual ~WebRtcVideoCapturer();
- 
-   bool Init(const Device& device);
-+  bool Init(const Device& device, int32_t idx);
-   bool Init(webrtc::VideoCaptureModule* module);
- 
-   // Override virtual methods of the parent class VideoCapturer.
-Index: talk/media/webrtc/webrtcvideocapturer.cc
-===================================================================
---- talk/media/webrtc/webrtcvideocapturer.cc	(revision 5193)
-+++ talk/media/webrtc/webrtcvideocapturer.cc	(working copy)
-@@ -140,6 +140,10 @@
- }
- 
- bool WebRtcVideoCapturer::Init(const Device& device) {
-+  return Init(device, -1);
-+}
-+
-+bool WebRtcVideoCapturer::Init(const Device& device, int32_t idx) {
-   if (module_) {
-     LOG(LS_ERROR) << "The capturer is already initialized";
-     return false;
-@@ -153,19 +157,27 @@
-   // Find the desired camera, by name.
-   // In the future, comparing IDs will be more robust.
-   // TODO(juberti): Figure what's needed to allow this.
-+ 
-   int num_cams = info->NumberOfDevices();
-   char vcm_id[256] = "";
-+  // There's an issue, particularly with the PS3 eye camera where this check doesn't work
-   bool found = false;
-   for (int index = 0; index < num_cams; ++index) {
-     char vcm_name[256];
-+   
-+    LOG(LS_INFO) << "Checking camers " << device.name << " " << device.id;
-     if (info->GetDeviceName(index, vcm_name, ARRAY_SIZE(vcm_name),
-                             vcm_id, ARRAY_SIZE(vcm_id)) != -1) {
--      if (device.name == reinterpret_cast<char*>(vcm_name)) {
-+    LOG(LS_INFO) << "Checking cameras " << reinterpret_cast<char*>(vcm_name) << " " << reinterpret_cast<char*>(vcm_id);
-+
-+      if (device.name == reinterpret_cast<char*>(vcm_name) ||
-+          device.id == reinterpret_cast<char*>(vcm_id) || index == idx) {
-         found = true;
-         break;
-       }
-     }
-   }
-+  
-   if (!found) {
-     LOG(LS_WARNING) << "Failed to find capturer for id: " << device.id;
-     factory_->DestroyDeviceInfo(info);
 Index: talk/app/webrtc/videosource.cc
 ===================================================================
 --- talk/app/webrtc/videosource.cc	(revision 5193)
@@ -1468,31 +1542,3 @@ Index: talk/app/webrtc/videosource.cc
  
  // List of formats used if the camera doesn't support capability enumeration.
  static const cricket::VideoFormatPod kVideoFormats[] = {
-Index: talk/libjingle_examples.gyp
-===================================================================
---- talk/libjingle_examples.gyp	(revision 5193)
-+++ talk/libjingle_examples.gyp	(working copy)
-@@ -191,9 +191,9 @@
-             }],  # OS=="win"
-             ['OS=="linux"', {
-               'sources': [
--                'examples/peerconnection/client/linux/main.cc',
--                'examples/peerconnection/client/linux/main_wnd.cc',
--                'examples/peerconnection/client/linux/main_wnd.h',
-+                'examples/peerconnection/client/linux/main.cc'
-               ],
-               'cflags': [
-                 '<!@(pkg-config --cflags glib-2.0 gobject-2.0 gtk+-2.0)',
-Index: talk/libjingle.gyp
-===================================================================
---- talk/libjingle.gyp	(revision 5193)
-+++ talk/libjingle.gyp	(working copy)
-@@ -33,7 +33,7 @@
-      'conditions': [
-        ['sysroot!=""', {
-          'variables': {
--           'pkg-config': '../../../build/linux/pkg-config-wrapper "<(sysroot)" "<(target_arch)"',
-+           'pkg-config': '/home/you/forgot/to/change/this/to/the/correct/path/libjingle/trunk/build/linux/pkg-config-wrapper "<(sysroot)" "<(target_arch)"',
-          },
-        }, {
-          'variables': {
