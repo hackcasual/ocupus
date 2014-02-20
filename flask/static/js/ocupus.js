@@ -74,7 +74,7 @@ function handlePeerMessage(peer_id, data) {
 
       localPeerConnection.createAnswer(function (description) {
         localPeerConnection.setLocalDescription(description);
-        description.sdp = setBitRate(description.sdp, 512);
+        description.sdp = setBitRate(description.sdp, 2048);
         sendToPeer(peer_id, JSON.stringify(description));
       }, null, sdpConstraints);
       localPeerConnection.onicecandidate = function (icb) {
