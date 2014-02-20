@@ -284,9 +284,9 @@ $(document).ready(function() {
       
     });
 
-  $( ".selector" ).on( "sortchange", function( event, ui ) {
+  $( "#camera-panel" ).on( "sortstop", function( event, ui ) {
     for (var s in streams) {
-      attachMediaStream($("#" + s).get(0), streams[s]);
+      $("#" + s).get(0).play();
     }
   } );
 
