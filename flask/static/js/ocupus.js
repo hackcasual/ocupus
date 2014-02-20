@@ -59,6 +59,8 @@ function getHashParams() {
     return hashParams;
 }
 
+var streams = {};
+
 function handlePeerMessage(peer_id, data) {
   lastPeerId = peer_id;
   ++message_counter;
@@ -90,6 +92,7 @@ function handlePeerMessage(peer_id, data) {
         $("#camera-panel").append("<div class='panel panel-primary'><div class='panel-heading'>" 
           + other_peers[peer_id] + "</div><video id='" + vidid + "' autoplay></video></div>");
         attachMediaStream($("#" + vidid).get(0), e.stream);
+        streams[vidid] = e.stream;
       };
 
       localConnections[peer_id] = localPeerConnection;
@@ -273,4 +276,19 @@ $(document).ready(function() {
 
   NProgress.start();
   connect();
+
+
+  $("#camera-panel").sortable({
+    connectWith: "#camera-panel",
+          handle: ".panel-heading"
+      
+    });
+
+  $( ".selector" ).on( "sortchange", function( event, ui ) {
+    for (var s in streams) {
+      attachMediaStream($("#" + s).get(0), streams[s]);
+    }
+  } );
+
+
 });
