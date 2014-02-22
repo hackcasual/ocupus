@@ -62,6 +62,7 @@ function getHashParams() {
 var streams = {};
 
 function handlePeerMessage(peer_id, data) {
+  console.log(peer_id + " " + data);
   lastPeerId = peer_id;
   ++message_counter;
 
@@ -197,6 +198,7 @@ function signInCallback() {
 }
 
 function signIn() {
+
   try {
     request = new XMLHttpRequest();
     request.onerror = function(e) {
@@ -258,23 +260,33 @@ function disconnect() {
 
 }
 
+function logLine(line) {
+    $("<div />").text(line).appendTo("#log-information");
+    tailScroll();
+}
+
+scrollTriggered = false;
+
+function tailScroll() {
+    if (!scrollTriggered) {
+      scrollTriggered = true;
+      setTimeout("animateScroll()", 100);
+    }
+}
+
+function animateScroll() {
+    var height = $("#log-information").get(0).scrollHeight;
+    $("#log-information").animate({
+        scrollTop: height
+    }, 200);
+    scrollTriggered = false;
+}
+
 window.onbeforeunload = disconnect;
 
 $(document).ready(function() {
-  var hashConf = getHashParams();
-  if (typeof(hashConf['server']) !== 'undefined') {
-    $("#server").attr("value",hashConf['server']);
-  }
-
-  if (typeof(hashConf['restrict']) !== 'undefined' && hashConf['restrict'] == "y") {
-    $("#dofilter").prop('checked', true);
-  }
-
-  if (typeof(hashConf['auto']) !== 'undefined' && hashConf['auto'] == "y") {
-    connect();
-  }
-
   NProgress.start();
+  console.log("Connecting...");
   connect();
 
 
@@ -286,9 +298,12 @@ $(document).ready(function() {
 
   $( ".selector" ).on( "sortchange", function( event, ui ) {
     for (var s in streams) {
-      attachMediaStream($("#" + s).get(0), streams[s]);
+      $("#" + s).get(0).play();
     }
   } );
 
+ for (var i = 0; i < 100; i++) {
+  logLine("Test " + i);
+ }
 
 });

@@ -26,14 +26,24 @@ body {
     display: inline-block;
 }
 
+#log {
+    background: #000;
+}
+
 .panel-heading {
     font-family: "YanoneKaffeesatz Regular";
     font-size: 14pt;
     padding: 5px 15px;
+    background: none;
 }
 
 #log-data {
     margin-top: 10px;
+}
+
+#log-information {
+    max-height: 35em;
+    overflow-y: scroll;
 }
 
 .navbar {
