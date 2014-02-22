@@ -134,6 +134,7 @@ function hangingGetCallback() {
       return;
     if (hangingGet.status != 200) {
       showError(hangingGet.statusText);
+      my_id = -1;
       disconnect();
     } else {
       var peer_id = GetIntHeader(hangingGet, "Pragma");
@@ -162,6 +163,7 @@ function startHangingGet() {
     hangingGet.send();  
   } catch (e) {
     showError(e.description);
+    my_id = -1;
   }
 }
 
