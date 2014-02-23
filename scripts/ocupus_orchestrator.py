@@ -8,6 +8,7 @@ import os
 import shlex
 import signal
 import sys
+import datetime
 
 BIN_DIR='/home/odroid/ocupus/bin/armv7-neon/'
 
@@ -44,17 +45,42 @@ class Camera:
     def __repr__(self):
         return str(self.name) + ": " + str(self.device)
     def gstCommandLine(self):
-        return (" ! ".join(['gst-launch-0.10 v4l2src device=%(device)s',
-            '%(capabilities)s', 
-            'tee name=t', 
-            'queue2', 
-            'v4l2sink sync=false device=/dev/%(webrtc_device)s t.',
-            'queue2',  
-            'v4l2sink sync=false device=/dev/%(process_device)s'])) %\
-            {'device': self.device, 
-            'capabilities': self.capabilities,
-            'webrtc_device': self.webrtc_device,
-            'process_device': self.process_device}
+        if not self.should_record:
+            return (" ! ".join(['gst-launch-0.10 v4l2src device=%(device)s',
+                '%(capabilities)s', 
+                'tee name=t', 
+                'queue2', 
+                'v4l2sink sync=false device=/dev/%(webrtc_device)s t.',
+                'queue2',  
+                'v4l2sink sync=false device=/dev/%(process_device)s'])) %\
+                    {'device': self.device, 
+                    'capabilities': self.capabilities,
+                    'webrtc_device': self.webrtc_device,
+                    'process_device': self.process_device}
+        else:
+            d = datetime.datetime.now()
+            ts = d.isoformat("T")
+            filename = self.name + "-" + ts + ".webm"
+            return (" ! ".join(['gst-launch-0.10 v4l2src device=%(device)s',
+                '%(capabilities)s', 
+                'tee name=t', 
+                'queue2',
+                'tee name=writer', 
+                'queue2',                 
+                'v4l2sink sync=false device=/dev/%(webrtc_device)s t.',
+                'queue2',  
+                'v4l2sink sync=false device=/dev/%(process_device)s writer.',
+                'ffmpegcolorspace', 
+                'vp8enc', 
+                'webmmux name=mux', 
+                'filesink location=%(filename)s', 
+                'mux.'])) %\
+                    {'device': self.device, 
+                    'capabilities': self.capabilities,
+                    'webrtc_device': self.webrtc_device,
+                    'process_device': self.process_device,
+                    'filename': filename}
+
 
 config = ConfigParser.ConfigParser()
 config.read(['/home/odroid/ocupus/config/ocupus.cfg'])
