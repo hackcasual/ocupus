@@ -41,6 +41,7 @@ class Camera:
         self.process_device = None
         self.process_command = None
         self.v4l2_ctl = None
+        self.should_record = False
     def __repr__(self):
         return str(self.name) + ": " + str(self.device)
 
@@ -72,6 +73,9 @@ for x in config.sections():
             cam.v4l2_ctl = config.get(x, 'v4l2settings')
         if 'processor' in options:
             cam.process_command = config.get(x, 'processor')
+        if 'record' in options:
+            cam.should_record = True
+            print "Whoa!!!!!!!"
 
         if cam.port in ports:
             cam.device = ports[cam.port]
