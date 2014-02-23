@@ -44,13 +44,13 @@ class Camera:
     def __repr__(self):
         return str(self.name) + ": " + str(self.device)
     def gstCommandLine(self):
-        return " ! ".join(['gst-launch-0.10 v4l2src device=%(device)s',
+        return (" ! ".join(['gst-launch-0.10 v4l2src device=%(device)s',
             '%(capabilities)s', 
             'tee name=t', 
             'queue2', 
             'v4l2sink sync=false device=/dev/%(webrtc_device)s t.',
             'queue2',  
-            'v4l2sink sync=false device=/dev/%(process_device)s']) %
+            'v4l2sink sync=false device=/dev/%(process_device)s'])) %\
             {'device': self.device, 
             'capabilities': self.capabilities,
             'webrtc_device': self.webrtc_device,
