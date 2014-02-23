@@ -30,7 +30,6 @@ proc = subprocess.Popen(["python","/home/odroid/ocupus/flask/app.py"])
 phandles.append(proc)
 time.sleep(0.1)
 
-
 class Camera:
     def __init__(self):
         self.name = None
@@ -44,6 +43,18 @@ class Camera:
         self.should_record = False
     def __repr__(self):
         return str(self.name) + ": " + str(self.device)
+    def gstCommandLine(self):
+        return " ! ".join(['gst-launch-0.10 v4l2src device=%(device)s',
+            '%(capabilities)s', 
+            'tee name=t', 
+            'queue2', 
+            'v4l2sink sync=false device=/dev/%(webrtc_device)s t.',
+            'queue2',  
+            'v4l2sink sync=false device=/dev/%(process_device)s']) %
+            {'device': self.device, 
+            'capabilities': self.capabilities,
+            'webrtc_device': self.webrtc_device,
+            'process_device': self.process_device}
 
 config = ConfigParser.ConfigParser()
 config.read(['/home/odroid/ocupus/config/ocupus.cfg'])
@@ -75,7 +86,6 @@ for x in config.sections():
             cam.process_command = config.get(x, 'processor')
         if 'record' in options:
             cam.should_record = True
-            print "Whoa!!!!!!!"
 
         if cam.port in ports:
             cam.device = ports[cam.port]
@@ -124,14 +134,11 @@ for c in [z for z in cameras if cameras[z].v4l2_ctl]:
 for c in cameras:
     cameras[c].webrtc_device = v4l2loopback_devices.pop()
     cameras[c].process_device = v4l2loopback_devices.pop()
-    print("======================= Connecting camera %s to webrtc_dev =======================" % cameras[c].name)
+    print("======================= Connecting camera %s gstreamer =======================" % cameras[c].name)
 
 
     
-    args = shlex.split('gst-launch-0.10 v4l2src device=' + 
-        cameras[c].device + ' ! ' + cameras[c].capabilities + 
-        ' ! tee name=t ! queue2 ! v4l2sink sync=false device=/dev/' + cameras[c].webrtc_device +
-        ' t. ! queue2 ! v4l2sink sync=false device=/dev/' + cameras[c].process_device)
+    args = shlex.split(cameras[c].gstCommandLine())
 
     proc = subprocess.Popen(args)
     phandles.append(proc)
