@@ -9,6 +9,7 @@ import shlex
 import signal
 import sys
 import datetime
+import peerconnection_client
 
 BIN_DIR='/home/odroid/ocupus/bin/armv7-neon/'
 
@@ -22,14 +23,6 @@ def signal_handler(signal, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 
-# Fire up the server
-proc = subprocess.Popen([BIN_DIR + 'peerconnection_server'])
-phandles.append(proc)
-time.sleep(0.1)
-
-proc = subprocess.Popen(["python","/home/odroid/ocupus/flask/app.py"])
-phandles.append(proc)
-time.sleep(0.1)
 
 class Camera:
     def __init__(self):
@@ -60,7 +53,7 @@ class Camera:
         else:
             d = datetime.datetime.now()
             ts = d.isoformat("T")
-            filename = self.name + "-" + ts + ".webm"
+            filename = "/home/odroid/Videos/" + self.name + "-" + ts + ".webm"
             return (" ! ".join(['gst-launch-0.10 v4l2src device=%(device)s',
                 '%(capabilities)s', 
                 'tee name=t', 
@@ -70,11 +63,11 @@ class Camera:
                 'v4l2sink sync=false device=/dev/%(webrtc_device)s t.',
                 'queue2',  
                 'v4l2sink sync=false device=/dev/%(process_device)s writer.',
+                'queue2',
                 'ffmpegcolorspace', 
                 'vp8enc', 
                 'webmmux name=mux', 
-                'filesink location=%(filename)s', 
-                'mux.'])) %\
+                'filesink location=%(filename)s'])) %\
                     {'device': self.device, 
                     'capabilities': self.capabilities,
                     'webrtc_device': self.webrtc_device,
@@ -84,6 +77,14 @@ class Camera:
 
 config = ConfigParser.ConfigParser()
 config.read(['/home/odroid/ocupus/config/ocupus.cfg'])
+
+# Fire up the server
+proc = subprocess.Popen([BIN_DIR + 'peerconnection_server'])
+phandles.append(proc)
+time.sleep(0.1)
+
+# Launch our ZMQ adapter for the peerconnection client
+peerconnection_client.setup()
 
 system_devices = get_video_devices()
 
@@ -142,13 +143,13 @@ current_devices = {x for x in os.listdir("/dev/") if x.startswith("video")}
 
 subprocess.check_call(["modprobe", "v4l2loopback", "devices=%d" % (len(cameras) * 2)])
 
-
-time.sleep(3)
+# This is voodoo and should be removed when sufficient testing can be done
+time.sleep(1)
 v4l2loopback_devices = {x for x in os.listdir("/dev/") if x.startswith("video")}
 
 v4l2loopback_devices.difference_update(current_devices)
 
-# Configure the camers
+# Configure the cameras
 for c in [z for z in cameras if cameras[z].v4l2_ctl]:
     print("======================= Setting v4l2 controls for %s =======================" % cameras[c].name)
 
@@ -156,13 +157,13 @@ for c in [z for z in cameras if cameras[z].v4l2_ctl]:
     proc = subprocess.call(args)
 
 
-# Set up the camers for splitting
+# Set up the cameras for splitting
 for c in cameras:
     cameras[c].webrtc_device = v4l2loopback_devices.pop()
     cameras[c].process_device = v4l2loopback_devices.pop()
     print("======================= Connecting camera %s gstreamer =======================" % cameras[c].name)
 
-
+    print cameras[c].gstCommandLine()
     
     args = shlex.split(cameras[c].gstCommandLine())
 
@@ -194,7 +195,9 @@ for c in [z for z in cameras if cameras[z].process_command]:
     phandles.append(proc)
     time.sleep(0.100)
 
+# Lastly start flask
+proc = subprocess.Popen(["python","/home/odroid/ocupus/flask/app.py"])
+phandles.append(proc)
+time.sleep(0.1)
 
-while True:
-    time.sleep(5)
-
+peerconnection_client.monitor_system_events()

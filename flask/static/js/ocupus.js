@@ -10,10 +10,17 @@ var sdpConstraints = {'mandatory': {
                         'OfferToReceiveAudio':true, 
                         'OfferToReceiveVideo':true }};
 
+var orchestrator = -1;
+
 function handleServerNotification(data) {
   var parsed = data.split(',');
-  if (parseInt(parsed[2]) != 0)
+  if (parseInt(parsed[2]) != 0) {
     other_peers[parseInt(parsed[1])] = parsed[0];
+    if (parsed[0] === 'ocupus_orchestrator')
+      orchestrator = parseInt(parsed[1])
+  }
+
+
 }
 
 var localConnections = {};
@@ -23,8 +30,6 @@ var didIt = false;
 
 var remoteConn;
 var lastPeerId;
-
-
 
 function setBitRate(sdp, videoBitRate)
  {
@@ -37,7 +42,7 @@ function setBitRate(sdp, videoBitRate)
  }
 
 function isGoodCandidate(conn) {
-  if ($("#dofilter").checked) {
+  if (window.location.hostname.search("172.17") != -1) {
     return conn.search("172.17") != -1;
   }
   return true;
@@ -61,8 +66,17 @@ function getHashParams() {
 
 var streams = {};
 
+function handleOcupusMessage(message) {
+  if (message.type === "log") {
+    logLine(message.log);
+  }
+}
+
 function handlePeerMessage(peer_id, data) {
-  console.log(peer_id + " " + data);
+  if (other_peers[peer_id] == "ocupus_orchestrator") {
+    handleOcupusMessage(JSON.parse(data));
+    console.log(JSON.parse(data));
+  }
   lastPeerId = peer_id;
   ++message_counter;
 
