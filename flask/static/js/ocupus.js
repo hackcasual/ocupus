@@ -76,12 +76,10 @@ function handleOcupusMessage(message) {
       time_delta = window.performance.now() - nettraff.time;
 
       logLine("RX: " + rx_delta + " TX: " + tx_delta);
-
-      nettraff.rx = message.rx;
-      nettraff.tx = message.tx;
-      nettraff.time = window.performance.now();
-
     }
+    nettraff.rx = message.rx;
+    nettraff.tx = message.tx;
+    nettraff.time = window.performance.now();    
   }
 }
 
