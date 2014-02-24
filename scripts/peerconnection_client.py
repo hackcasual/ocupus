@@ -21,7 +21,7 @@ class Message:
         return str(self.type) + ":" + self.data
 
 
-def to_remote_server(port, peer_id):
+def to_remote_server(port, my_id, peer_id):
     context = zmq.Context()
     socket = context.socket(zmq.REP)
     socket.bind("tcp://*:%s" % port)
@@ -29,6 +29,8 @@ def to_remote_server(port, peer_id):
     while True:
         # Wait for next request from client
         message = socket.recv()
+        print "RUNNING......."
+        print peer_id.value
         if peer_id.value > 0:
             send_message(my_id, peer_id.value, message)
         socket.send("ACK")
@@ -47,7 +49,7 @@ def from_remote_server(port, message_queue):
 def hanging_get(my_id, messages, initial_peer_id):
     remote_sender = None
     remote_peer_id = Value("i", initial_peer_id)
-    remote_sender = Process(target=to_remote_server, args=(5550,remote_peer_id)).start()
+    remote_sender = Process(target=to_remote_server, args=(5550,my_id,remote_peer_id)).start()
 
     while True:
         r = requests.get('http://localhost:8888/wait?peer_id=' + str(my_id))
@@ -92,8 +94,11 @@ def setup():
     t = threading.Thread(target=hanging_get, args = (my_id, messages, initial_peer_id))
     t.daemon = True
     t.start()
-
-    Process(target=from_remote_server, args=(5554,messages)).start()
+    print "Started hanging get thread"    
+    p = Process(target=from_remote_server, args=(5554,messages))
+    p.daemon = True
+    p.start()
+    print "Started xmq process"
 
 def monitor_system_requests():
     context = zmq.Context()
@@ -103,8 +108,12 @@ def monitor_system_requests():
     while True:
         time.sleep(1)
         traffic_stats = system_utilities.get_traffic_info()
+        print "Trying to connect"
         socket.connect ("tcp://localhost:%s" % "5550")
+        print "Connected"
         socket.send ('{"type":"nettraff","rx":%d,"tx":%d}' % (traffic_stats[0], traffic_stats[1]))
+        socket.recv()
+        print "Doing my thing"
 
 
 
