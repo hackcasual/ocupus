@@ -96,18 +96,18 @@ def setup():
     Process(target=from_remote_server, args=(5554,messages)).start()
 
 def monitor_system_requests():
-	context = zmq.Context()
+    context = zmq.Context()
 
-	socket = context.socket(zmq.REQ)
+    socket = context.socket(zmq.REQ)
 
     while True:
         time.sleep(1)
         traffic_stats = system_utilities.get_traffic_info()
-      	socket.connect ("tcp://localhost:%s" % "5550")
-		socket.send ('{"type":"nettraff","rx":%d,"tx":%d}' % (traffic_stats[0], traffic_stats[1]))
+        socket.connect ("tcp://localhost:%s" % "5550")
+        socket.send ('{"type":"nettraff","rx":%d,"tx":%d}' % (traffic_stats[0], traffic_stats[1]))
 
 
 
 if __name__ == "__main__":
-	setup()
-	monitor_system_requests()
+    setup()
+    monitor_system_requests()
