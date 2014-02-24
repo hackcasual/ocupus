@@ -19,8 +19,6 @@ function handleServerNotification(data) {
     if (parsed[0] === 'ocupus_orchestrator')
       orchestrator = parseInt(parsed[1])
   }
-
-
 }
 
 var localConnections = {};
@@ -66,16 +64,30 @@ function getHashParams() {
 
 var streams = {};
 
+var nettraff = {rx: -1, tx: -1, time: -1}
+
 function handleOcupusMessage(message) {
   if (message.type === "log") {
     logLine(message.log);
+  } else if (message.type === "nettraff") {
+    if (nettraff.rx > 0) {
+      rx_delta = message.rx - nettraff.rx;
+      tx_delta = message.tx - nettraff.rx;
+      time_delta = window.performance.now() - nettraff.time;
+
+      logLine("RX: " + rx_delta + " TX: " + tx_delta);
+
+      nettraff.rx = message.rx;
+      nettraff.tx = message.tx;
+      nettraff.time = window.performance.now();
+
+    }
   }
 }
 
 function handlePeerMessage(peer_id, data) {
   if (other_peers[peer_id] == "ocupus_orchestrator") {
     handleOcupusMessage(JSON.parse(data));
-    console.log(JSON.parse(data));
   }
   lastPeerId = peer_id;
   ++message_counter;
