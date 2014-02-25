@@ -29,8 +29,6 @@ def to_remote_server(port, my_id, peer_id):
     while True:
         # Wait for next request from client
         message = socket.recv()
-        print "RUNNING......."
-        print peer_id.value
         if peer_id.value > 0:
             send_message(my_id, peer_id.value, message)
         socket.send("ACK")
@@ -39,7 +37,6 @@ def from_remote_server(port, message_queue):
     context = zmq.Context()
     socket = context.socket(zmq.PUB)
     socket.bind("tcp://*:%s" % port)
-
 
     time.sleep(1)
     while True:
@@ -70,6 +67,7 @@ def send_message(my_id, peer_id, message):
     req = urllib2.Request("http://localhost:8888/message?peer_id=" + str(my_id) + "&to=" + str(peer_id), data)
     response = urllib2.urlopen(req)
     the_page = response.read()
+    response.close()
 
 def setup():
     r = requests.get('http://localhost:8888/sign_in?ocupus_orchestrator')
@@ -98,22 +96,25 @@ def setup():
     p = Process(target=from_remote_server, args=(5554,messages))
     p.daemon = True
     p.start()
+
+    sysproc = Process(target=system_utilities.power_control_listener)
+    sysproc.daemon = True
+    sysproc.start()
+
     print "Started xmq process"
 
 def monitor_system_requests():
     context = zmq.Context()
 
     socket = context.socket(zmq.REQ)
+    socket.connect ("tcp://localhost:%s" % "5550")
 
     while True:
         time.sleep(1)
         traffic_stats = system_utilities.get_traffic_info()
-        print "Trying to connect"
-        socket.connect ("tcp://localhost:%s" % "5550")
-        print "Connected"
         socket.send ('{"type":"nettraff","rx":%d,"tx":%d}' % (traffic_stats[0], traffic_stats[1]))
         socket.recv()
-        print "Doing my thing"
+
 
 
 

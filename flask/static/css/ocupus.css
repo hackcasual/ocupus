@@ -18,6 +18,10 @@ body {
     font-family: 'SourceCodePro Regular';
 }
 
+#traffic-graph p {
+  margin-left: 75px;
+}
+
 #camera-panel>.panel {
     margin-right: 10px;
     float: left;
@@ -64,6 +68,8 @@ body {
     padding-right: 1em;
     float: left;
 }
+
+
 
 .connection-status>.fa {
     padding-top: 5px;
@@ -208,3 +214,21 @@ body {
   display: inline-block;
   border-radius: 50%;
 }
+
+.rule line {
+  stroke: #eee;
+  shape-rendering: crispEdges;
+}
+
+.line {
+  fill: none;
+  stroke: steelblue;
+  stroke-width: 1.5px;
+}
+
+.x.axis line {
+  shape-rendering: auto;
+}
+
+
+

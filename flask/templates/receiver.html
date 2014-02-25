@@ -40,24 +40,49 @@
 {% block content %}
    <div class="container-fluid">
       <div class="row">
+       <div class="col-sm-3 col-md-2 sidebar">
+          <ul class="nav nav-sidebar">
+            <li class="active"><a href="#">System Control</a></li>
+            <li><a href="#" id="reboot-button">Reboot <i class="fa fa-refresh"></i></a></li>
+            <li><a href="#" id="shutdown-button">Shutdown <i class="fa fa-level-down"></i></a></li>
+          </ul>
+       </div>      
         <div class="col-sm-9 col-sm-offset-3 col-md-10 col-md-offset-2 main">
           <div id="alerts"></div>
           <div id="camera-panel" class="row">
 
           </div>
+          
+          <!-- Log data -->
           <div class="row" id="log-data">
-          <div class="panel panel-success" id="log"><div class="panel-heading">
-                  <a data-toggle="collapse" data-parent="#log-data" href="#collapseOne">
-          Log
-        </a></div>
-    <div id="collapseOne" class="panel-collapse collapse in">
-      <div class="panel-body" id="log-information">
-      </div>
-    </div>
+            <div class="panel panel-success" id="log">
+              <div class="panel-heading">
+                <a data-toggle="collapse" data-parent="#log-data" href="#collapseOne">
+                  Log
+                </a>
+              </div>
+              <div id="collapseOne" class="panel-collapse collapse in">
+                <div class="panel-body" id="log-information"></div>
+              </div>
+            </div>
           </div>
+
+          <!-- Network Traffic -->
+          <div class="row" id="nettraff-graph">
+            <div class="panel panel-success" id="nettraff">
+              <div class="panel-heading">
+                <a data-toggle="collapse" data-parent="#nettraff-graph" href="#collapseNettraff">
+                  Network Traffic
+                </a>
+              </div>
+              <div id="collapseNettraff" class="panel-collapse collapse in">
+                <div class="panel-body" id="traffic-graph"></div>
+              </div>
+            </div>
           </div>
+
+        </div>
       </div>
-    </div>
    </div>
     {% endblock %}
 
@@ -67,6 +92,7 @@
 <script src="{{url_for('.static', filename='js/nprogress.js')}}"></script>
 <script src="{{url_for('.static', filename='js/jquery-ui-1.10.4.custom.min.js')}}"></script>
 <script src="{{url_for('.static', filename='js/adapter.js')}}"></script>
+<script src="{{url_for('.static', filename='js/d3.v3.min.js')}}"></script>
 <script src="{{url_for('.static', filename='js/ocupus.js')}}"></script>
 
 {% endblock %}

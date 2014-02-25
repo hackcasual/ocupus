@@ -1,4 +1,5 @@
 import subprocess
+import zmq
 
 def get_traffic_info():
     try:
@@ -15,3 +16,25 @@ def get_traffic_info():
         return (rx, tx)
     except:
         return (-1, -1)
+
+"""
+Responsible for handling reboot and poweroff requests
+"""
+def power_control_listener():
+    port = "5554"
+    context = zmq.Context()
+    socket = context.socket(zmq.SUB)
+    socket.connect ("tcp://localhost:%s" % port)
+
+    topicfilter = "system"
+    socket.setsockopt(zmq.SUBSCRIBE, topicfilter)
+    print "STARTING POWER CONTROL LISTENING"
+
+    while True:
+        string = socket.recv_unicode()
+        print "GOT A MESSAGE!!!!!!!!"
+        topic, _, messagedata = string.partition(' ')
+        if messagedata == "shutdown":
+            subprocess.call(['poweroff'])
+        if messagedata == "restart":
+            subprocess.call(['reboot'])

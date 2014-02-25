@@ -16,7 +16,7 @@ function handleServerNotification(data) {
   var parsed = data.split(',');
   if (parseInt(parsed[2]) != 0) {
     other_peers[parseInt(parsed[1])] = parsed[0];
-    if (parsed[0] === 'ocupus_orchestrator')
+    if (parsed[0] == "ocupus_orchestrator")
       orchestrator = parseInt(parsed[1])
   }
 }
@@ -39,10 +39,20 @@ function setBitRate(sdp, videoBitRate)
   return sdp;
  }
 
+var hasShownReject = false;
+
 function isGoodCandidate(conn) {
   if (window.location.hostname.search("172.17") != -1) {
+    if (hasShownReject == false) {
+      logLine("Running in VPN mode, rejecting all non VPN candidates"); 
+      hasShownReject = true;
+    }
     return conn.search("172.17") != -1;
   }
+  if (hasShownReject == false) {
+    logLine("*********** WARNING :: Not restricting candidates to VPN. If this is an official match, you're in trouble!"); 
+    hasShownReject = true;
+  }  
   return true;
 }
 
@@ -65,6 +75,8 @@ function getHashParams() {
 var streams = {};
 
 var nettraff = {rx: -1, tx: -1, time: -1}
+var rx_delta_mbps = 0;
+var tx_delta_mbps = 0;
 
 function handleOcupusMessage(message) {
   if (message.type === "log") {
@@ -72,10 +84,11 @@ function handleOcupusMessage(message) {
   } else if (message.type === "nettraff") {
     if (nettraff.rx > 0) {
       rx_delta = message.rx - nettraff.rx;
-      tx_delta = message.tx - nettraff.rx;
-      time_delta = window.performance.now() - nettraff.time;
+      tx_delta = message.tx - nettraff.tx;
+      time_delta = (window.performance.now() - nettraff.time) / 1000.0;
 
-      logLine("RX: " + rx_delta + " TX: " + tx_delta);
+      tx_delta_mbps = (((tx_delta + rx_delta) * 8)/1e6) / time_delta;
+
     }
     nettraff.rx = message.rx;
     nettraff.tx = message.tx;
@@ -101,7 +114,7 @@ function handlePeerMessage(peer_id, data) {
 
       localPeerConnection.createAnswer(function (description) {
         localPeerConnection.setLocalDescription(description);
-        description.sdp = setBitRate(description.sdp, 2048);
+        description.sdp = setBitRate(description.sdp, 1024);
         sendToPeer(peer_id, JSON.stringify(description));
       }, null, sdpConstraints);
       localPeerConnection.onicecandidate = function (icb) {
@@ -140,16 +153,19 @@ function GetIntHeader(r, name) {
 }
 
 function showConnected() {
+  logLine("Now connected to " + server);
   $("li.connection-status").html('<div class="connection-text">Connected</div><div class="fa fa-link fa-2x" style="color: white;">');
 }
 
 function showDisconnected() {
+  logLine("Now disconnected from " + server);
   $("li.connection-status").html('<div class="connection-text">No Connection</div><div class="fa fa-unlink fa-2x" style="color: white;">');
 }
 
 
 function showError(status) {
           $("#alerts").append('<div class="alert alert-danger" data-dismiss="alert">' + status + '</div>');
+          logLine("<span style='color:red'>" + status + "</span>");
 }
 
 function hangingGetCallback() {
@@ -157,8 +173,10 @@ function hangingGetCallback() {
     if (hangingGet.readyState != 4)
       return;
     if (hangingGet.status != 200) {
-      showError(hangingGet.statusText);
+      console.log(hangingGet)
+      showError("Lost connection to server" + hangingGet.statusText);
       my_id = -1;
+      showDisconnected();
       disconnect();
     } else {
       var peer_id = GetIntHeader(hangingGet, "Pragma");
@@ -178,6 +196,30 @@ function hangingGetCallback() {
       window.setTimeout(startHangingGet, 0);
 }
 
+function systemShutdown() {
+  var confirm=prompt("Powering off ocupus. Only do this at the end of a match. Type poweroff to confirm ","");
+
+  if (confirm=="poweroff")
+  {
+    sendToPeer(orchestrator, '{"topic":"system","message":"shutdown"}');
+    logLine("Sending power off to ocupus");
+  } else {
+    logLine("Canceling power off");
+  }
+}
+
+function systemReboot() {
+  var confirm=prompt("Rebooting ocupus. Only do this if you're having trouble. Type reboot to confirm ","");
+
+  if (confirm=="reboot")
+  {
+    sendToPeer(orchestrator, '{"topic":"system","message":"restart"}');
+    logLine("Sending reboot to ocupus");
+  } else {
+    logLine("Canceling reboot");
+  }
+}
+
 function startHangingGet() {
   try {
     hangingGet = new XMLHttpRequest();
@@ -188,6 +230,7 @@ function startHangingGet() {
   } catch (e) {
     showError(e.description);
     my_id = -1;
+    showDisconnected();
   }
 }
 
@@ -200,9 +243,8 @@ function onHangingGetTimeout() {
 }
 
 function signInCallback() {
-  NProgress.done();
-  console.log(request);
-  showConnected();
+
+
   try {
     if (request.readyState == 4) {
       if (request.status == 200) {
@@ -212,13 +254,19 @@ function signInCallback() {
           if (peers[i].length > 0) {
             var parsed = peers[i].split(',');
             other_peers[parseInt(parsed[1])] = parsed[0];
+            if (parsed[0] == "ocupus_orchestrator")
+              orchestrator = parseInt(parsed[1])            
+
           }
         }
+        NProgress.done();
         startHangingGet();
+        showConnected();        
         request = null;
       }
     }
   } catch (e) {
+    NProgress.done();    
     showError("error: " + e.description);
   }
 }
@@ -241,14 +289,6 @@ function signIn() {
 }
 
 function sendToPeer(peer_id, data) {
-  if (my_id == -1) {
-    alert("Not connected");
-    return;
-  }
-  if (peer_id == my_id) {
-    alert("Can't send a message to oneself :)");
-    return;
-  }
   var r = new XMLHttpRequest();
   r.open("POST", server + "/message?peer_id=" + my_id + "&to=" + peer_id,
          false);
@@ -287,7 +327,7 @@ function disconnect() {
 }
 
 function logLine(line) {
-    $("<div />").text(line).appendTo("#log-information");
+    $("<div />").html(line).appendTo("#log-information");
     tailScroll();
 }
 
@@ -326,10 +366,79 @@ $(document).ready(function() {
     for (var s in streams) {
       $("#" + s).get(0).play();
     }
-  } );
+  });
 
- for (var i = 0; i < 100; i++) {
-  logLine("Test " + i);
- }
+  $("#reboot-button").click(systemReboot);
+  $("#shutdown-button").click(systemShutdown);
+});
+
+
+
+var tx_data = d3.range(150).map(function() {return 0});
+
+function chart(domain, interpolation, tick) {
+
+  var margin = {top: 6, right: 0, bottom: 6, left: 80},
+      width = 400,
+      height = 120 - margin.top - margin.bottom;
+
+  var x = d3.scale.linear()
+      .domain(domain)
+      .range([0, width]);
+
+  var y = d3.scale.linear()
+      .domain([0, 3])
+      .range([height, 0]);
+
+  var line = d3.svg.line()
+      .interpolate(interpolation)
+      .x(function(d, i) { return x(i); })
+      .y(function(d, i) { return y(d); });
+
+  var svg = d3.select("#traffic-graph").append("p").append("svg")
+      .attr("width", width + margin.left + margin.right)
+      .attr("height", height + margin.top + margin.bottom)
+      .style("margin-left", -margin.left + "px")
+    .append("g")
+      .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+  svg.append("defs").append("clipPath")
+      .attr("id", "clip")
+    .append("rect")
+      .attr("width", width)
+      .attr("height", height);
+
+  svg.append("g")
+      .attr("class", "y axis")
+      .call(d3.svg.axis().tickFormat(function(d) { return d.toFixed(1) + " mbps"; }).scale(y).ticks(5).orient("left"));
+
+  var path = svg.append("g")
+      .attr("clip-path", "url(#clip)")
+    .append("path")
+      .data([tx_data])
+      .attr("class", "line")
+      .attr("d", line);
+
+  tick(path, line, tx_data, x);
+}
+
+chart([0, 150 - 1], "linear", function tick(path, line, tx_data, x) {
+
+  // push a new data point onto the back
+  tx_data.push(tx_delta_mbps);
+
+  // redraw the line, and then slide it to the left
+  path
+      .attr("d", line)
+      .attr("transform", null)
+    .transition()
+      .duration(1000)
+      .ease("linear")
+      .attr("transform", "translate(" + x(-1) + ")")
+      .each("end", function() { tick(path, line, tx_data, x); });
+
+  // pop the old data point off the front
+  tx_data.shift();
 
 });
+
