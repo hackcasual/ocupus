@@ -17,6 +17,10 @@ BIN_DIR='/home/odroid/ocupus/bin/armv7-neon/'
 
 phandles = []
 
+d = datetime.datetime.now()
+TS_BASE = d.isoformat("T").replace(":","")
+
+
 def signal_handler(signal, frame):
     print("Ending due to sigint")
     for p in phandles:
@@ -46,20 +50,38 @@ class Camera:
     def __init__(self):
         self.name = None
         self.port = None
-        self.capabilities = "video/x-raw-yuv,width=320,height=240"
+        self.capabilities = "video/x-raw,width=320,height=240"
         self.device = None
         self.webrtc_device = None
         self.process_device = None
         self.process_command = None
-        self.recording_device = None
         self.v4l2_ctl = None
         self.should_record = False
+
+        # If a camera supports mjpeg while recording, we don't do any extra encoding
+        self.mjpeg_gstpipe = ""
     def __repr__(self):
         return str(self.name) + ": " + str(self.device)
     def gstCommandLine(self):
+        capabilities_ex = ""
+
+        # Tee off a recording stream
+        if self.should_record:
+            capabilities_ex += " ! queue2 ! tee name=mjpeg"
+
+        if self.capabilities.find("jpeg") >= 0:
+            # Convert to raw format for the other systems
+            capabilities_ex += " ! jpegdec ! videoconvert ! video/x-raw,format=I420"
+        elif self.should_record:
+            # If we're not capturing with jpeg we'll have to encode first
+            self.mjpeg_gstpipe = " ! jpegenc"
+
+        # Right now recording only works if the camera supports mjpeg capture
+        filename = "/home/odroid/Videos/" + self.name + "-" + TS_BASE + ".mjpeg"
+
         if not self.should_record:
-            return (" ! ".join(['gst-launch-0.10 v4l2src device=%(device)s',
-                '%(capabilities)s', 
+            return (" ! ".join(['gst-launch-1.0 v4l2src device=%(device)s',
+                '%(capabilities)s%(capabilities_ex)s', 
                 'tee name=t', 
                 'queue2', 
                 'v4l2sink sync=false device=/dev/%(webrtc_device)s t.',
@@ -67,25 +89,26 @@ class Camera:
                 'v4l2sink sync=false device=/dev/%(process_device)s'])) %\
                     {'device': self.device, 
                     'capabilities': self.capabilities,
+                    'capabilities_ex': capabilities_ex,
                     'webrtc_device': self.webrtc_device,
                     'process_device': self.process_device}
         else:
-            return (" ! ".join(['gst-launch-0.10 v4l2src device=%(device)s',
-                '%(capabilities)s', 
+            return (" ! ".join(['gst-launch-1.0 v4l2src device=%(device)s',
+                '%(capabilities)s%(capabilities_ex)s', 
                 'tee name=t', 
-                'queue2',
-                'tee name=writer', 
                 'queue2',                 
                 'v4l2sink sync=false device=/dev/%(webrtc_device)s t.',
                 'queue2',  
-                'v4l2sink sync=false device=/dev/%(process_device)s writer.',
+                'v4l2sink sync=false device=/dev/%(process_device)s mjpeg.%(mjpeg_gstpipe)s',
                 'queue2',
-                'v4l2sink sync=false device=/dev/%(recording_device)s'])) %\
+                'filesink sync=false location=%(filename)s'])) %\
                     {'device': self.device, 
                     'capabilities': self.capabilities,
+                    'capabilities_ex': capabilities_ex,
                     'webrtc_device': self.webrtc_device,
                     'process_device': self.process_device,
-                    'recording_device': self.recording_device}
+                    'mjpeg_gstpipe': self.mjpeg_gstpipe,
+                    'filename': filename}
 
 
 config = ConfigParser.ConfigParser()
@@ -110,8 +133,6 @@ for sd in system_devices:
 
 cameras = dict()
 
-recording_devices = 0
-
 for x in config.sections():
     if x.startswith("Camera "):
         name = x[7:]
@@ -130,7 +151,6 @@ for x in config.sections():
             cam.process_command = config.get(x, 'processor')
         if 'record' in options:
             cam.should_record = True
-            recording_devices += 1
 
         if cam.port in ports:
             cam.device = ports[cam.port]
@@ -158,7 +178,7 @@ except:
 
 current_devices = {x for x in os.listdir("/dev/") if x.startswith("video")}
 
-subprocess.check_call(["modprobe", "v4l2loopback", "devices=%d" % (len(cameras) * 2 + recording_devices)])
+subprocess.check_call(["modprobe", "v4l2loopback", "devices=%d" % (len(cameras) * 2)])
 
 # This is voodoo and should be removed when sufficient testing can be done
 time.sleep(1)
@@ -178,8 +198,6 @@ for c in [z for z in cameras if cameras[z].v4l2_ctl]:
 for c in cameras:
     cameras[c].webrtc_device = v4l2loopback_devices.pop()
     cameras[c].process_device = v4l2loopback_devices.pop()
-    if cameras[c].should_record:
-        cameras[c].recording_device = v4l2loopback_devices.pop()
 
     print("======================= Connecting camera %s gstreamer =======================" % cameras[c].name)
 
@@ -190,7 +208,7 @@ for c in cameras:
     proc = subprocess.Popen(args)
     phandles.append(proc)
     # Hopefully this will give time to properly sync up the log statement above
-    time.sleep(0.100)
+    time.sleep(2.0)
 
 # Spawn the clients
 for c in cameras:
@@ -201,7 +219,7 @@ for c in cameras:
         '" --videodevice /dev/' + cameras[c].webrtc_device)
     proc = subprocess.Popen(args)
     phandles.append(proc)
-    time.sleep(0.100)
+    time.sleep(2.0)
 
 # Start subprocessors
 for c in [z for z in cameras if cameras[z].process_command]:
@@ -219,20 +237,5 @@ for c in [z for z in cameras if cameras[z].process_command]:
 proc = subprocess.Popen(["python","/home/odroid/ocupus/flask/app.py"])
 phandles.append(proc)
 time.sleep(0.1)
-
-# Start subprocessors
-for c in [z for z in cameras if cameras[z].should_record]:
-    d = datetime.datetime.now()
-    ts = d.isoformat("T")
-    filename = "/home/odroid/Videos/" + cameras[c].name + "-" + ts + ".webm"
-
-    print("======================= Recording %s to %s =======================" % (cameras[c].name, filename))
-    args = shlex.split(
-        "avconv -v error -f video4linux2 -i /dev/%(recording_device)s -cpu-used -5 -c:v libvpx -b:v 2048k %(filename)s" %\
-        {"recording_device":cameras[c].recording_device,
-         "filename":filename})
-    proc = subprocess.Popen(args)
-    phandles.append(proc)
-    time.sleep(0.100)
 
 peerconnection_client.monitor_system_requests()
