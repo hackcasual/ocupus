@@ -238,4 +238,8 @@ proc = subprocess.Popen(["python","/home/odroid/ocupus/flask/app.py"])
 phandles.append(proc)
 time.sleep(0.1)
 
+# Fire up the video vacuum
+proc = subprocess.Popen(["python","/home/odroid/ocupus/scripts/video_compactor.py"])
+phandles.append(proc)
+
 peerconnection_client.monitor_system_requests()
