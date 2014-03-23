@@ -1,5 +1,15 @@
 import subprocess
 import zmq
+import json
+import yaml
+from multiprocessing import Process, Value, Queue
+import shlex
+
+system_cameras = None
+
+def setup_cameras(cameras):
+    global system_cameras
+    system_cameras = cameras
 
 def get_traffic_info():
     try:
@@ -38,3 +48,44 @@ def power_control_listener():
             subprocess.call(['poweroff'])
         if messagedata == "restart":
             subprocess.call(['reboot'])
+
+def run_camera_control():
+    print system_cameras
+    sysproc = Process(target=camera_control_listener, args=(system_cameras,))
+    sysproc.daemon = True
+    sysproc.start()
+
+
+"""
+Responsible for handling camera control requests
+"""
+def camera_control_listener(camera_info):
+    print camera_info
+    cameras = yaml.load(file('/home/odroid/ocupus/config/ocupus.yml', 'r'))['cameras']
+
+    port = "5554"
+    context = zmq.Context()
+    socket = context.socket(zmq.SUB)
+    socket.connect ("tcp://localhost:%s" % port)
+
+    topicfilter = "cameraControl"
+    socket.setsockopt(zmq.SUBSCRIBE, topicfilter)
+    print "STARTING POWER CONTROL LISTENING"
+
+    while True:
+        string = socket.recv_unicode()
+
+        topic, _, messagedata = string.partition(' ')
+
+        # Need to fix the json->python serialization happening in peercon
+        messagedata = messagedata.replace("u'","'")
+        messagedata = messagedata.replace("'",'"')
+
+        control = json.loads(messagedata)
+
+        name = control['camera']
+
+        v4l2args = [a['v4l2settings-off'] for a in cameras if a['name'] == name][0]
+
+        args = shlex.split("v4l2-ctl -d " + camera_info[name].device + " " + v4l2args)
+        proc = subprocess.call(args)

@@ -13,6 +13,7 @@ import peerconnection_client
 import code
 import traceback
 import yaml
+import system_utilities
 
 BIN_DIR='/home/odroid/ocupus/bin/armv7-neon/'
 
@@ -179,6 +180,8 @@ v4l2loopback_devices = {x for x in os.listdir("/dev/") if x.startswith("video")}
 
 v4l2loopback_devices.difference_update(current_devices)
 
+system_utilities.setup_cameras(cameras)
+
 # Configure the cameras
 for c in [z for z in cameras if cameras[z].v4l2_ctl]:
     print("======================= Setting v4l2 controls for %s =======================" % cameras[c].name)
@@ -234,5 +237,5 @@ time.sleep(0.1)
 # Fire up the video vacuum
 proc = subprocess.Popen(["python","/home/odroid/ocupus/scripts/video_compactor.py"])
 phandles.append(proc)
-
+system_utilities.run_camera_control()
 peerconnection_client.monitor_system_requests()

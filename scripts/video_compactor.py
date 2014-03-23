@@ -35,12 +35,12 @@ while True:
                 least_file_time = when
                 least_file = f
 
-    fn = f.replace("mjpeg","avi").replace("/Videos/","/Videos/converted/")
+    if least_file:
+        fn = least_file.replace("mjpeg","avi").replace("/Videos/","/Videos/converted/")
 
+        p = subprocess.Popen('nice -n 15  avconv -y -v error -i %s -b:v 2M %s' % (least_file, fn), shell=True)
+        r = p.wait()
 
-    p = subprocess.Popen('nice -n 15  avconv -y -v error -i %s -b:v 2M %s' % (f, fn), shell=True)
-    r = p.wait()
-
-    subprocess.check_call(["rm", f])
+        subprocess.check_call(["rm", least_file])
 
     time.sleep(10)
