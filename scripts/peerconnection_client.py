@@ -110,12 +110,10 @@ def monitor_system_requests():
     socket.connect ("tcp://localhost:%s" % "5550")
 
     while True:
-        time.sleep(1)
+        time.sleep(3)
         traffic_stats = system_utilities.get_traffic_info()
         socket.send ('{"type":"nettraff","rx":%d,"tx":%d}' % (traffic_stats[0], traffic_stats[1]))
         socket.recv()
-
-
 
 
 if __name__ == "__main__":

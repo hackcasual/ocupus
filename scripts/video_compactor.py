@@ -18,6 +18,10 @@ while True:
 
     mjpeg_files = glob.glob('/home/odroid/Videos/*.mjpeg')
 
+    if (len(mjpeg_files) > 2):
+        time.sleep(10)
+        continue
+
     least_file_time = dt.strptime("3014-03-16T214638.752173","%Y-%m-%dT%H%M%S.%f")
     least_file = None
 
@@ -37,7 +41,6 @@ while True:
     p = subprocess.Popen('nice -n 15  avconv -y -v error -i %s -b:v 2M %s' % (f, fn), shell=True)
     r = p.wait()
 
-    if r == 0:
-        subprocess.check_call(["rm", f])
+    subprocess.check_call(["rm", f])
 
     time.sleep(10)

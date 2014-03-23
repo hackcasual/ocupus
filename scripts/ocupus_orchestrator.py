@@ -12,6 +12,7 @@ import datetime
 import peerconnection_client
 import code
 import traceback
+import yaml
 
 BIN_DIR='/home/odroid/ocupus/bin/armv7-neon/'
 
@@ -111,8 +112,7 @@ class Camera:
                     'filename': filename}
 
 
-config = ConfigParser.ConfigParser()
-config.read(['/home/odroid/ocupus/config/ocupus.cfg'])
+config = yaml.load(file('/home/odroid/ocupus/config/ocupus.yml', 'r'))
 
 # Fire up the server
 proc = subprocess.Popen([BIN_DIR + 'peerconnection_server'])
@@ -133,29 +133,22 @@ for sd in system_devices:
 
 cameras = dict()
 
-for x in config.sections():
-    if x.startswith("Camera "):
-        name = x[7:]
-        cam = Camera()
-        cam.name = name
+for x in config['cameras']:
+    name = x['name']
+    cam = Camera()
+    cam.name = name
 
-        cam.port = config.get(x, 'port')
+    cam.port = x.get('port')
 
-        options = config.options(x)
+    cam.capabilities = x.get('capabilities')
+    cam.v4l2_ctl = x.get('v4l2settings')
+    cam.process_command = x.get('processor')
+    cam.should_record = x.get('record', False)
 
-        if 'capabilities' in options:
-            cam.capabilities = config.get(x, 'capabilities')
-        if 'v4l2settings' in options:
-            cam.v4l2_ctl = config.get(x, 'v4l2settings')
-        if 'processor' in options:
-            cam.process_command = config.get(x, 'processor')
-        if 'record' in options:
-            cam.should_record = True
-
-        if cam.port in ports:
-            cam.device = ports[cam.port]
-            del ports[cam.port]
-            cameras[cam.name] = cam
+    if cam.port in ports:
+        cam.device = ports[cam.port]
+        del ports[cam.port]
+        cameras[cam.name] = cam
 
 unknown_count = 0
 

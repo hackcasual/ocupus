@@ -138,11 +138,21 @@ function handlePeerMessage(peer_id, data) {
     }  
 
     if (data.search("candidate") != -1 && isGoodCandidate(data)) {
-      var candidateInfo = JSON.parse(data);
+      var candidateInfo = JSON.parse($.trim(data));
+      candidateInfo.candidate = $.trim(candidateInfo.candidate);
+      console.log(candidateInfo);
       var cand = new RTCIceCandidate(candidateInfo);
 
-      localConnections[peer_id].addIceCandidate(new RTCIceCandidate(candidateInfo));
+      cand.candidate = $.trim(cand.candidate);
 
+      try {
+
+
+      localConnections[peer_id].addIceCandidate(new RTCIceCandidate(candidateInfo));
+      } catch (exc) {
+        console.error(exc);
+        console.log(new RTCIceCandidate(candidateInfo));
+      }
       didIt = true;
     } 
 }
