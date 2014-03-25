@@ -144,9 +144,15 @@ function handlePeerMessage(peer_id, data) {
         };
 
         localPeerConnection.onaddstream = function gotRemoteStream(e) {
-            var vidid = "vid" + peer_id;
+            var vidid = "vid" + other_peers[peer_id];
 
-            $("#camera-panel").append("<div class='panel panel-primary'><div class='panel-heading'>" + other_peers[peer_id] + "</div><video id='" + vidid + "' autoplay></video></div>");
+            vid_overlay = "";
+
+            if (ocupusCameraOverlays[other_peers[peer_id]]) {
+                vid_overlay = "<div class='vidoverlay'><img src='" + ocupusCameraOverlays[other_peers[peer_id]] + "'></div>"
+            }
+
+            $("#camera-panel").append("<div class='panel panel-primary'><div class='panel-heading'>" + other_peers[peer_id] + "</div>" + vid_overlay + "<video id='" + vidid + "' autoplay></video></div>");
             attachMediaStream($("#" + vidid).get(0), e.stream);
             streams[vidid] = e.stream;
         };

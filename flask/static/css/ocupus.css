@@ -18,6 +18,10 @@ body {
     font-family: 'SourceCodePro Regular';
 }
 
+.vidoverlay {
+  position: absolute;
+}
+
 #traffic-graph p {
   margin-left: 75px;
 }
@@ -148,6 +152,9 @@ body {
 }
 @media (max-width: 768px) {
   video {
+    width: 320px;
+  }
+  .vidoverlay>img {
     width: 320px;
   }
 }

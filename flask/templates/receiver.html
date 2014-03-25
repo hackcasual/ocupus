@@ -45,16 +45,19 @@
             <li class="active"><a href="#">System Control</a></li>
             <li><a href="#" id="reboot-button">Reboot <i class="fa fa-refresh"></i></a></li>
             <li><a href="#" id="shutdown-button">Shutdown <i class="fa fa-level-down"></i></a></li>
-    {% for camera in cameras %}
-        {% if 'v4l2settings-off' in camera %}
-        <li><a class="btn btn-primary btn-success" role="button" href="#" id="shutdown-button" onclick="reenableGain('{{ camera.name }}')">Reenable Gain for {{ camera.name }}</i></a></li>
-        {% endif %}
-        
-    {% endfor %}            
           </ul>
        </div>      
         <div class="col-sm-9 col-sm-offset-3 col-md-10 col-md-offset-2 main">
           <div id="alerts"></div>
+          <div id="controls">
+                {% for camera in cameras %}
+        {% if 'v4l2settings-off' in camera %}
+        <a class="btn btn-primary btn-success" role="button" href="#" id="shutdown-button" onclick="reenableGain('{{ camera.name }}')">Reenable Gain for {{ camera.name }} <i class="fa fa-eye fa-3x"></i></a>
+        {% endif %}
+        
+    {% endfor %}            
+
+          </div>
           <div id="camera-panel" class="row">
 
           </div>
@@ -95,10 +98,15 @@
 {% block scripts %}
 <script>
   window.ocupusCameraBitRates = {}
+  window.ocupusCameraOverlays = {}
     {% for camera in cameras %}
         {% if 'bitrate' in camera %}
         window.ocupusCameraBitRates['{{ camera.name }}'] = {{ camera.bitrate }};
         {% endif %}
+        {% if 'overlay' in camera %}
+        window.ocupusCameraOverlays['{{ camera.name }}'] = "{{ camera.overlay }}";
+        {% endif %}
+
     {% endfor %}          
 </script>
 <script src="{{url_for('.static', filename='js/jquery-2.1.0.min.js')}}"></script>
