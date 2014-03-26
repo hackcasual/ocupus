@@ -120,7 +120,7 @@ config = yaml.load(file('/home/odroid/ocupus/config/ocupus.yml', 'r'))
 
 ManagedProcess(BIN_DIR + 'peerconnection_server', "servers", "peerconnection", True).start()
 
-time.sleep(0.1)
+time.sleep(2.0)
 
 # Launch our ZMQ adapter for the peerconnection client
 peerconnection_client.setup()

@@ -187,6 +187,7 @@ function GetIntHeader(r, name) {
 
 function showConnected() {
     logLine("Now connected to " + server);
+    $("#alerts").empty();
     $("li.connection-status").html('<div class="connection-text">Connected</div><div class="fa fa-link fa-2x" style="color: white;">');
 }
 
@@ -197,7 +198,7 @@ function showDisconnected() {
 
 
 function showError(status) {
-    $("#alerts").append('<div class="alert alert-danger" data-dismiss="alert">' + status + '</div>');
+    $("#alerts").append('<div class="alert alert-danger" data-dismiss="alert">' + status + ' Reconnecting <div class="spinner">  <div class="bounce1"></div>  <div class="bounce2"></div>  <div class="bounce3"></div></div></div>');
     logLine("<span style='color:red'>" + status + "</span>");
 }
 
@@ -230,9 +231,11 @@ function hangingGetCallback() {
 }
 
 function systemShutdown() {
-    var confirm = prompt("Powering off ocupus. Only do this at the end of a match. Type poweroff to confirm ", "");
+    setTimeout(function() {
+        $("[name='control-safe']").bootstrapSwitch('state', false);
+    });
 
-    if (confirm == "poweroff") {
+    if ($("[name='control-safe']").is(':checked')) {
         sendToPeer(orchestrator, '{"topic":"system","message":"shutdown"}');
         logLine("Sending power off to ocupus");
     } else {
@@ -241,9 +244,12 @@ function systemShutdown() {
 }
 
 function systemReboot() {
-    var confirm = prompt("Rebooting ocupus. Only do this if you're having trouble. Type reboot to confirm ", "");
+    setTimeout(function() {
+        $("[name='control-safe']").bootstrapSwitch('state', false);
+    });
 
-    if (confirm == "reboot") {
+    if ($("[name='control-safe']").is(':checked')) {
+        $("[name='control-safe']").bootstrapSwitch('state', false);
         sendToPeer(orchestrator, '{"topic":"system","message":"restart"}');
         logLine("Sending reboot to ocupus");
     } else {
@@ -309,6 +315,7 @@ function signIn() {
         request = new XMLHttpRequest();
         request.onerror = function(e) {
             console.log(e);
+            pollServer();
             showError("An error occured connecting to the server");
             showDisconnected();
         }
@@ -317,6 +324,7 @@ function signIn() {
         request.send();
     } catch (e) {
         showError("error: " + e.description);
+        pollServer();
     }
 }
 
@@ -337,6 +345,8 @@ function connect() {
 }
 
 function disconnect() {
+    setTimeout(pollServer, 500);
+
     if (request) {
         request.abort();
         request = null;
@@ -347,16 +357,43 @@ function disconnect() {
         hangingGet = null;
     }
 
-    if (my_id != -1) {
-        console.log("Signing out");
-        request = new XMLHttpRequest();
-        request.open("GET", server + "/sign_out?peer_id=" + my_id, false);
-        request.send();
-        request = null;
-        my_id = -1;
+    try {
+        if (my_id != -1) {
+            console.log("Signing out");
+            request = new XMLHttpRequest();
+            request.open("GET", server + "/sign_out?peer_id=" + my_id, false);
+            request.send();
+            request = null;
+            my_id = -1;
+        }
+    } catch (e) {
+        console.log(e);
     }
+}
 
+window.ocupusPollRate = 250;
 
+window.onfocus = function() {
+    window.ocupusPollRate = 250;
+}
+
+window.onblur = function() {
+    window.ocupusPollRate = 2500;
+}
+
+function pollServer() {
+    $.ajax({
+        url: "/alive",
+        timeout: 250,
+        cache: false
+    })
+        .done(function(e) {
+            $("#camera-panel").empty();
+            connect();
+        })
+        .fail(function(e) {
+            setTimeout(pollServer, window.ocupusPollRate);
+        });
 }
 
 function logLine(line) {

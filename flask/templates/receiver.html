@@ -9,6 +9,8 @@
       href="{{url_for('.static', filename='css/nprogress.css')}}">
 <link rel="stylesheet"
       href="{{url_for('.static', filename='css/font-awesome.min.css')}}">
+<link rel="stylesheet"
+      href="{{url_for('.static', filename='css/bootstrap3/bootstrap-switch.css')}}">
 <link rel="shortcut icon" href="{{url_for('.static', filename='images/favicon.ico')}}">
 {% endblock %}
 
@@ -43,6 +45,7 @@
        <div class="col-sm-3 col-md-2 sidebar">
           <ul class="nav nav-sidebar">
             <li class="active"><a href="#">System Control</a></li>
+            <li class="control-switch"><input type="checkbox" name="control-safe" data-on-color="danger" data-off-color="info"></li>            
             <li><a href="#" id="reboot-button">Reboot <i class="fa fa-refresh"></i></a></li>
             <li><a href="#" id="shutdown-button">Shutdown <i class="fa fa-level-down"></i></a></li>
           </ul>
@@ -52,7 +55,7 @@
           <div id="controls">
                 {% for camera in cameras %}
         {% if 'v4l2settings-off' in camera %}
-        <a class="btn btn-primary btn-success" role="button" href="#" id="shutdown-button" onclick="reenableGain('{{ camera.name }}')">Reenable Gain for {{ camera.name }} <i class="fa fa-eye fa-3x"></i></a>
+        <a class="btn btn-primary btn-success btn-lg" role="button" href="#" id="shutdown-button" onclick="reenableGain('{{ camera.name }}')">Reenable Gain for {{ camera.name }} <i class="fa fa-eye fa-3x"></i></a>
         {% endif %}
         
     {% endfor %}            
@@ -111,10 +114,13 @@
 </script>
 <script src="{{url_for('.static', filename='js/jquery-2.1.0.min.js')}}"></script>
 <script src="{{url_for('.static', filename='js/bootstrap.min.js')}}"></script>
+<script src="{{url_for('.static', filename='js/bootstrap-switch.js')}}"></script>
 <script src="{{url_for('.static', filename='js/nprogress.js')}}"></script>
 <script src="{{url_for('.static', filename='js/jquery-ui-1.10.4.custom.min.js')}}"></script>
 <script src="{{url_for('.static', filename='js/adapter.js')}}"></script>
 <script src="{{url_for('.static', filename='js/d3.v3.min.js')}}"></script>
 <script src="{{url_for('.static', filename='js/ocupus.js')}}"></script>
-
+<script>
+  $("[name='control-safe']").bootstrapSwitch();
+</script>
 {% endblock %}

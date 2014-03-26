@@ -16,6 +16,14 @@ def receiver():
 def bstest():
     return render_template('bootstraptest.html')
 
+@app.route('/editor')
+def code_editor():
+    return render_template('codeeditor.html')    
+
+@app.route('/alive')
+def alive():
+    return "Yup"
+
 if __name__ == '__main__':
     app.debug = True
     app.run(host='0.0.0.0')
