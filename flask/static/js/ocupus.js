@@ -208,9 +208,9 @@ function hangingGetCallback() {
     if (hangingGet.status != 200) {
         console.log(hangingGet)
         showError("Lost connection to server" + hangingGet.statusText);
-        my_id = -1;
         showDisconnected();
         disconnect();
+        my_id = -1;
     } else {
         var peer_id = GetIntHeader(hangingGet, "Pragma");
         if (peer_id == my_id) {
@@ -260,8 +260,9 @@ function startHangingGet() {
         hangingGet.send();
     } catch (e) {
         showError(e.description);
-        my_id = -1;
+        disconnect();
         showDisconnected();
+        my_id = -1;
     }
 }
 
@@ -347,6 +348,7 @@ function disconnect() {
     }
 
     if (my_id != -1) {
+        console.log("Signing out");
         request = new XMLHttpRequest();
         request.open("GET", server + "/sign_out?peer_id=" + my_id, false);
         request.send();
@@ -380,6 +382,7 @@ function animateScroll() {
 }
 
 window.onbeforeunload = disconnect;
+window.onunload = disconnect;
 
 $(document).ready(function() {
     NProgress.start();

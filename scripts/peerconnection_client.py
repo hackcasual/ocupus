@@ -59,6 +59,8 @@ def hanging_get(my_id, messages, initial_peer_id):
 
                     if len(info) == 3 and info[0] == "receiver" and info[2] == '1':
                         remote_peer_id.value = int(info[1])
+                    if len(info) == 3 and info[0] == "receiver" and info[2] == '0':
+                        remote_peer_id.value = -1                        
             else:
                 messages.put(Message(int(r.headers['pragma']), r.text))
 

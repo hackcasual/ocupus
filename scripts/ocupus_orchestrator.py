@@ -14,6 +14,7 @@ import code
 import traceback
 import yaml
 import system_utilities
+from process_wrangler import ManagedProcess
 
 BIN_DIR='/home/odroid/ocupus/bin/armv7-neon/'
 
@@ -27,6 +28,8 @@ def signal_handler(signal, frame):
     print("Ending due to sigint")
     for p in phandles:
         p.kill()
+
+    ManagedProcess.system_shutdown()
     sys.exit(0)
 
 
@@ -115,9 +118,8 @@ class Camera:
 
 config = yaml.load(file('/home/odroid/ocupus/config/ocupus.yml', 'r'))
 
-# Fire up the server
-proc = subprocess.Popen([BIN_DIR + 'peerconnection_server'])
-phandles.append(proc)
+ManagedProcess(BIN_DIR + 'peerconnection_server', "servers", "peerconnection", True).start()
+
 time.sleep(0.1)
 
 # Launch our ZMQ adapter for the peerconnection client
@@ -185,7 +187,6 @@ system_utilities.setup_cameras(cameras)
 # Configure the cameras
 for c in [z for z in cameras if cameras[z].v4l2_ctl]:
     print("======================= Setting v4l2 controls for %s =======================" % cameras[c].name)
-
     args = shlex.split("v4l2-ctl -d " + cameras[c].device + " " + cameras[c].v4l2_ctl)
     proc = subprocess.call(args)
 
@@ -196,26 +197,19 @@ for c in cameras:
     cameras[c].process_device = v4l2loopback_devices.pop()
 
     print("======================= Connecting camera %s gstreamer =======================" % cameras[c].name)
-
-    print cameras[c].gstCommandLine()
-    
-    args = shlex.split(cameras[c].gstCommandLine())
-
-    proc = subprocess.Popen(args)
-    phandles.append(proc)
-    # Hopefully this will give time to properly sync up the log statement above
-    time.sleep(2.0)
+    ManagedProcess(cameras[c].gstCommandLine(), "gstreamer", cameras[c].name, True).start()
+    time.sleep(0.5)
 
 # Spawn the clients
 for c in cameras:
     print("======================= Connecting camera %s to peerconnection =======================" % cameras[c].name)
 
-    args = shlex.split(BIN_DIR+'peerconnection_client' + 
+    ManagedProcess(BIN_DIR+'peerconnection_client' + 
         ' --server localhost --port 8888 --clientname "' + cameras[c].name + 
-        '" --videodevice /dev/' + cameras[c].webrtc_device)
-    proc = subprocess.Popen(args)
-    phandles.append(proc)
-    time.sleep(2.0)
+        '" --videodevice /dev/' + cameras[c].webrtc_device,
+         "peerconnection", cameras[c].name, True).start()
+
+    time.sleep(0.5)
 
 # Start subprocessors
 for c in [z for z in cameras if cameras[z].process_command]:
@@ -230,12 +224,11 @@ for c in [z for z in cameras if cameras[z].process_command]:
     time.sleep(0.100)
 
 # Start flask after we've got the processors and local clients online
-proc = subprocess.Popen(["python","/home/odroid/ocupus/flask/app.py"])
-phandles.append(proc)
+ManagedProcess("python /home/odroid/ocupus/flask/app.py", "servers", "flask", True).start()
 time.sleep(0.1)
 
 # Fire up the video vacuum
-proc = subprocess.Popen(["python","/home/odroid/ocupus/scripts/video_compactor.py"])
-phandles.append(proc)
+ManagedProcess("python /home/odroid/ocupus/scripts/video_compactor.py", "utilities", "video_compactor", True).start()
+
 system_utilities.run_camera_control()
 peerconnection_client.monitor_system_requests()
