@@ -89,6 +89,7 @@
  python-zmq
  screen
  sysstat
+ usbmount
  uvcdynctrl
  uvcdynctrl-data
  v4l2loopback-dkms

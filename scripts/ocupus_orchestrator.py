@@ -59,6 +59,7 @@ class Camera:
         self.process_command = None
         self.v4l2_ctl = None
         self.should_record = False
+        self.capture_audio = False
 
         # If a camera supports mjpeg while recording, we don't do any extra encoding
         self.mjpeg_gstpipe = ""
@@ -78,31 +79,28 @@ class Camera:
             # If we're not capturing with jpeg we'll have to encode first
             self.mjpeg_gstpipe = " ! jpegenc"
 
-        # Right now recording only works if the camera supports mjpeg capture
-        filename = "/home/odroid/Videos/" + self.name + "-" + TS_BASE + ".mjpeg"
+        # Capture to a matroska container to capture frame timestamps
+        filename = "/home/odroid/Videos/" + self.name + "-" + TS_BASE + ".mkv"
+
+        # Common pipeline for all cameras
+        base_gstreamer = " ! ".join(['gst-launch-1.0 v4l2src device=%(device)s do-timestamp=true',
+            '%(capabilities)s%(capabilities_ex)s', 
+            'tee name=t', 
+            'queue2', 
+            'v4l2sink sync=false device=/dev/%(webrtc_device)s t.',
+            'queue2',  
+            'v4l2sink sync=false device=/dev/%(process_device)s'])
 
         if not self.should_record:
-            return (" ! ".join(['gst-launch-1.0 v4l2src device=%(device)s',
-                '%(capabilities)s%(capabilities_ex)s', 
-                'tee name=t', 
-                'queue2', 
-                'v4l2sink sync=false device=/dev/%(webrtc_device)s t.',
-                'queue2',  
-                'v4l2sink sync=false device=/dev/%(process_device)s'])) %\
-                    {'device': self.device, 
+            return base_gstreamer % {'device': self.device, 
                     'capabilities': self.capabilities,
                     'capabilities_ex': capabilities_ex,
                     'webrtc_device': self.webrtc_device,
                     'process_device': self.process_device}
-        else:
-            return (" ! ".join(['gst-launch-1.0 v4l2src device=%(device)s',
-                '%(capabilities)s%(capabilities_ex)s', 
-                'tee name=t', 
-                'queue2',                 
-                'v4l2sink sync=false device=/dev/%(webrtc_device)s t.',
-                'queue2',  
-                'v4l2sink sync=false device=/dev/%(process_device)s mjpeg.%(mjpeg_gstpipe)s',
+        elif not self.capture_audio:
+            return (base_gstreamer + " ! ".join([' mjpeg.%(mjpeg_gstpipe)s',
                 'queue2',
+                'matroskamux',
                 'filesink sync=false location=%(filename)s'])) %\
                     {'device': self.device, 
                     'capabilities': self.capabilities,
@@ -111,7 +109,26 @@ class Camera:
                     'process_device': self.process_device,
                     'mjpeg_gstpipe': self.mjpeg_gstpipe,
                     'filename': filename}
-
+        else:
+            # Ugly hack for now, but on the Odroid XU it seems 
+            # we'll always get a USB audio device for recording on 0,0
+            return (base_gstreamer + " ! ".join([' mjpeg.%(mjpeg_gstpipe)s',
+                'queue2',
+                'mux. alsasrc device=hw:0,0', 
+                'queue2',
+                'audioconvert',
+                'vorbisenc',
+                'queue2',
+                'mux. matroskamux name=mux',
+                'filesink sync=false location=%(filename)s'])) %\
+                    {'device': self.device, 
+                    'capabilities': self.capabilities,
+                    'capabilities_ex': capabilities_ex,
+                    'webrtc_device': self.webrtc_device,
+                    'process_device': self.process_device,
+                    'mjpeg_gstpipe': self.mjpeg_gstpipe,
+                    'filename': filename}
+#mux. alsasrc device=hw:0,0 ! queue2 ! audioconvert ! vorbisenc ! queue ! mux. matroskamux name=mux !
 
 config = yaml.load(file('/home/odroid/ocupus/config/ocupus.yml', 'r'))
 
@@ -145,6 +162,7 @@ for x in config['cameras']:
     cam.v4l2_ctl = x.get('v4l2settings')
     cam.process_command = x.get('processor')
     cam.should_record = x.get('record', False)
+    cam.capture_audio = x.get('capture_audio', False)
 
     if cam.port in ports:
         cam.device = ports[cam.port]
@@ -156,13 +174,13 @@ unknown_count = 0
 for sd in system_devices:
     if system_devices[sd].port_connection in ports:
         cam = Camera()
-        cam.name = "Unknown%d" % unknown_count
+        cam.name = "Unknown"
  
         unknown_count += 1
         cam.port = system_devices[sd].port_connection
         cam.device = ports[cam.port]
 
-        cam.name += "::" + str(cam.port)
+        cam.name += str(cam.port)
         cameras[cam.name] = cam
 
 try:
