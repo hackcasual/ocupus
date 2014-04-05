@@ -425,7 +425,7 @@ function chart(domain, interpolation, tick) {
         .range([0, width]);
 
     var y = d3.scale.linear()
-        .domain([0, 3])
+        .domain([0, 6])
         .range([height, 0]);
 
     var line = d3.svg.line()

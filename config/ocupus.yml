@@ -1,3 +1,8 @@
+video_capture:
+    - mount_point: /media/usb0
+      require_mount: Yes
+      directory: 3574Videos
+
 cameras:
     - name: Infrared
       port: 5-1
@@ -5,15 +10,17 @@ cameras:
       v4l2settings: -c auto_gain=0 -c main_gain=0
       v4l2settings-off: -c auto_gain=1
       #processor: python /home/odroid/ocupus/scripts/camera_processor.py /home/odroid/getting2rectanglesandcomparing.py
-      record: No
+      record: Yes
       bitrate: 256
+      stream: No
 
     - name: DriveCam
       port: 1-3-1
-      record: No
+      record: Yes
       capabilities: image/jpeg,width=800,height=448,framerate=30/1
       bitrate: 1536
       overlay: /static/images/drivecam_crosshairs.png
+      stream: Yes
 
     - name: FancyCam
       port: 1-1
