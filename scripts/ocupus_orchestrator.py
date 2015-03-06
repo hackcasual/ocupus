@@ -151,6 +151,10 @@ except:
 current_devices = {x for x in os.listdir("/dev/") if x.startswith("video")}
 
 subprocess.check_call(["modprobe", "v4l2loopback", "devices=%d" % len(cameras)])
+try:
+    subprocess.check_call(["mount", "/dev/sda1", "/storage"])
+except:
+    pass
 
 # This is voodoo and should be removed when sufficient testing can be done
 time.sleep(1)
