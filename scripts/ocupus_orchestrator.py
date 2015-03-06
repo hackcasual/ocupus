@@ -16,8 +16,6 @@ import yaml
 import system_utilities
 from process_wrangler import ManagedProcess
 
-BIN_DIR='/home/odroid/ocupus/bin/armv7-neon/'
-
 phandles = []
 
 d = datetime.datetime.now()
@@ -57,11 +55,11 @@ class Camera:
         self.port = None
         self.capabilities = "video/x-raw,width=320,height=240"
         self.device = None
-        self.webrtc_device = None
         self.process_device = None
         self.process_command = None
         self.v4l2_ctl = None
         self.should_record = False
+        self.network_port = 5800
 
         # If a camera supports mjpeg while recording, we don't do any extra encoding
         self.mjpeg_gstpipe = ""
@@ -69,61 +67,35 @@ class Camera:
         return str(self.name) + ": " + str(self.device)
     def gstCommandLine(self):
         capabilities_ex = ""
+        tee_chunks = ""
+
+
+        base_pipe = ['gst-launch-1.0 v4l2src device=%(device)s',
+                     '\'%(capabilities)s\'%(capabilities_ex)s']
+
 
         # Tee off a recording stream
         if self.should_record:
-            capabilities_ex += " ! queue2 ! tee name=mjpeg"
+            capabilities_ex += " ! queue ! tee name=record"
+            filename = "/storage/videos/" + self.name + "-" + TS_BASE + ".mkv"
+            tee_chunks += " record. ! queue ! h264parse ! matroskamux ! filesink location={}".format(filename)
 
-        if self.capabilities.find("jpeg") >= 0:
-            # Convert to raw format for the other systems
-            capabilities_ex += " ! jpegdec ! videoconvert ! video/x-raw,format=I420"
-        elif self.should_record:
-            # If we're not capturing with jpeg we'll have to encode first
-            self.mjpeg_gstpipe = " ! jpegenc"
+        capabilities_ex += " ! omxh264dec ! nvvidconv ! video/x-raw,width=640,height=360"
 
-        # Right now recording only works if the camera supports mjpeg capture
-        filename = "/home/odroid/Videos/" + self.name + "-" + TS_BASE + ".mjpeg"
+        if self.process_command:
+            capabilities_ex += " ! queue ! tee name=process"
+            tee_chunks += " process. ! queue ! v4l2sink sync=false device=/dev/{}".format(self.process_device)
 
-        if not self.should_record:
-            return (" ! ".join(['gst-launch-1.0 v4l2src device=%(device)s',
-                '%(capabilities)s%(capabilities_ex)s', 
-                'tee name=t', 
-                'queue2', 
-                'v4l2sink sync=false device=/dev/%(webrtc_device)s t.',
-                'queue2',  
-                'v4l2sink sync=false device=/dev/%(process_device)s'])) %\
-                    {'device': self.device, 
-                    'capabilities': self.capabilities,
-                    'capabilities_ex': capabilities_ex,
-                    'webrtc_device': self.webrtc_device,
-                    'process_device': self.process_device}
-        else:
-            return (" ! ".join(['gst-launch-1.0 v4l2src device=%(device)s',
-                '%(capabilities)s%(capabilities_ex)s', 
-                'tee name=t', 
-                'queue2',                 
-                'v4l2sink sync=false device=/dev/%(webrtc_device)s t.',
-                'queue2',  
-                'v4l2sink sync=false device=/dev/%(process_device)s mjpeg.%(mjpeg_gstpipe)s',
-                'queue2',
-                'filesink sync=false location=%(filename)s'])) %\
-                    {'device': self.device, 
-                    'capabilities': self.capabilities,
-                    'capabilities_ex': capabilities_ex,
-                    'webrtc_device': self.webrtc_device,
-                    'process_device': self.process_device,
-                    'mjpeg_gstpipe': self.mjpeg_gstpipe,
-                    'filename': filename}
+        capabilities_ex += " ! omxh264enc target-bitrate=1000000 ! rtph264pay name=pay0 pt=96 config-interval=1 ! udpsink host=224.1.1.1 auto-multicast=true port={}".format(self.network_port)
+
+        return (" ! ".join(base_pipe)) %\
+                {'device': self.device,
+                'capabilities': self.capabilities,
+                'capabilities_ex': capabilities_ex,
+                'network_port':str(self.network_port)} + tee_chunks
 
 
-config = yaml.load(file('/home/odroid/ocupus/config/ocupus.yml', 'r'))
-
-ManagedProcess(BIN_DIR + 'peerconnection_server', "servers", "peerconnection", True).start()
-
-time.sleep(2.0)
-
-# Launch our ZMQ adapter for the peerconnection client
-peerconnection_client.setup()
+config = yaml.load(file('/etc/ocupus.yml', 'r'))
 
 time.sleep(0.25)
 
@@ -136,6 +108,8 @@ for sd in system_devices:
 
 cameras = dict()
 
+cur_port = 0
+
 for x in config['cameras']:
     name = x['name']
     cam = Camera()
@@ -147,6 +121,8 @@ for x in config['cameras']:
     cam.v4l2_ctl = x.get('v4l2settings')
     cam.process_command = x.get('processor')
     cam.should_record = x.get('record', False)
+    cam.network_port = 5800 + cur_port
+    cur_port += 1
 
     if cam.port in ports:
         cam.device = ports[cam.port]
@@ -174,7 +150,7 @@ except:
 
 current_devices = {x for x in os.listdir("/dev/") if x.startswith("video")}
 
-subprocess.check_call(["modprobe", "v4l2loopback", "devices=%d" % (len(cameras) * 2)])
+subprocess.check_call(["modprobe", "v4l2loopback", "devices=%d" % len(cameras)])
 
 # This is voodoo and should be removed when sufficient testing can be done
 time.sleep(1)
@@ -193,23 +169,13 @@ for c in [z for z in cameras if cameras[z].v4l2_ctl]:
 
 # Set up the cameras for splitting
 for c in cameras:
-    cameras[c].webrtc_device = v4l2loopback_devices.pop()
     cameras[c].process_device = v4l2loopback_devices.pop()
 
     print("======================= Connecting camera %s gstreamer =======================" % cameras[c].name)
+    print(cameras[c].gstCommandLine())
     ManagedProcess(cameras[c].gstCommandLine(), "gstreamer", cameras[c].name, True).start()
     time.sleep(0.5)
 
-# Spawn the clients
-for c in cameras:
-    print("======================= Connecting camera %s to peerconnection =======================" % cameras[c].name)
-
-    ManagedProcess(BIN_DIR+'peerconnection_client' + 
-        ' --server localhost --port 8888 --clientname "' + cameras[c].name + 
-        '" --videodevice /dev/' + cameras[c].webrtc_device,
-         "peerconnection", cameras[c].name, True).start()
-
-    time.sleep(0.5)
 
 # Start subprocessors
 for c in [z for z in cameras if cameras[z].process_command]:
@@ -224,11 +190,11 @@ for c in [z for z in cameras if cameras[z].process_command]:
     time.sleep(0.100)
 
 # Start flask after we've got the processors and local clients online
-ManagedProcess("python /home/odroid/ocupus/flask/app.py", "servers", "flask", True).start()
-time.sleep(0.1)
+#ManagedProcess("python /home/odroid/ocupus/flask/app.py", "servers", "flask", True).start()
+#time.sleep(0.1)
 
 # Fire up the video vacuum
-ManagedProcess("python /home/odroid/ocupus/scripts/video_compactor.py", "utilities", "video_compactor", True).start()
+#ManagedProcess("python /home/odroid/ocupus/scripts/video_compactor.py", "utilities", "video_compactor", True).start()
 
-system_utilities.run_camera_control()
+#system_utilities.run_camera_control()
 peerconnection_client.monitor_system_requests()
